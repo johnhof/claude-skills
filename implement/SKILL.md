@@ -169,6 +169,11 @@ Launch a **selection agent** that:
 - Picks the single best implementation and explains why the others were rejected
 - Writes `~/.claude/runs/implement/{{prompt-slug}}/SELECTION_REASONING.md` containing:
   - A **summary of each agent's implementation** — what approach it took, which files it changed, and notable design decisions
+  - A **divergence analysis** — assessing how much the 5 drafts actually differed from each other, covering:
+    - **Structural divergence**: Did agents converge on the same file changes and call sites, or did they take meaningfully different approaches to where logic lives?
+    - **Logical decisions**: List the key decision points in the implementation (e.g., "where to validate input", "whether to add a helper vs inline", "how to handle the error case") and for each, how many agents made each choice
+    - **Test strategy divergence**: Did agents write similar tests or did they cover different scenarios / use different patterns?
+    - **Convergence verdict**: A plain-English summary — e.g. "4 of 5 agents produced nearly identical implementations; running in parallel added little value here" vs "agents diverged significantly across 3 distinct approaches; parallelism surfaced real design tradeoffs"
   - The **selection decision** — which agent was chosen and the specific reasons it won
   - The **rejection reasons** for each losing agent — concrete, per-agent explanations referencing diff size, design choices, CI results, TDD adherence, etc.
 - Copies the winning draft contents into the absolute path of `~/.claude/runs/implement/{{prompt-slug}}/solution/`
