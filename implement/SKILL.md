@@ -94,7 +94,8 @@ Where `{{prompt-slug}}` is a short kebab-case summary of the prompt (e.g., `add-
 Full layout:
 ```
 ~/.claude/runs/implement/{{prompt-slug}}/
-  README.md                              ← full text of the optimized prompt
+  README.md                              ← goals, background, and requirements from the original prompt (context for a future reader)
+  SPEC.md                                ← full optimized prompt used to drive implementation
   SELECTION_REASONING.md                 ← per-agent summaries and selection rationale
   drafts/
     agent-1/{{project}}/                 ← agent 1's isolated git draft
@@ -115,7 +116,9 @@ Full layout:
 
 Where `{{project}}` is the basename of the git root of the repo being modified.
 
-Before launching agents, write the full optimized prompt text to `README.md` in the prompt slug directory.
+Before launching agents, write two files to the prompt slug directory:
+- **`README.md`** — a human-readable summary of the goals, background, and requirements behind the task. Written for a future reader who wants to understand *why* this work was done and *what* it was meant to accomplish. Derived from the original prompt and any linked tickets or context provided.
+- **`SPEC.md`** — the full optimized prompt text used to drive the implementation agents.
 
 ## Step 1 — Parallel Implementation (5 Worktrees)
 
