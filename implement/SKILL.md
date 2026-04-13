@@ -10,7 +10,7 @@ Before starting any step, check whether a run directory for this prompt already 
 |-----------|-----------|
 | Implementations directory does not exist | Step 1 — full start |
 | Implementations directory exists, all drafts are empty or absent | Step 1 — re-run agents |
-| All 5 drafts contain implementations, but `solution/{{project}}/` is absent or not a git worktree | Step 2 — selection |
+| All {AGENT_COUNT} drafts contain implementations, but `solution/{{project}}/` is absent or not a git worktree | Step 2 — selection |
 | `solution/{{project}}/` is a valid git worktree, `reviews/` is empty or absent | Step 3 — iteration 1 |
 | `reviews/iteration-N/review.md` exists and contains `APPROVED` | Step 4 — finalize |
 | `reviews/iteration-N/review.md` exists but no `APPROVED` found, and no `iteration-N+1/` exists | Step 3 — iteration N+1 (continue review cycle) |
@@ -30,6 +30,8 @@ If the state is ambiguous (e.g., some drafts have work and some don't), print a 
 
 Print a status line at the **start and completion of every step and sub-agent**. Use the format below. Directory paths must be printed as absolute paths so the terminal renders them as clickable links.
 
+The example below shows the max (AGENT_COUNT=5) case; for simple tasks with 3 agents, only agent-1 through agent-3 lines appear.
+
 ```
 [workflow] ┌ Step 1/4 — Parallel Implementation
 [agent-1]  ├ START  → ~/.claude/runs/implement/{{prompt-slug}}/drafts/agent-1/{{project}}
@@ -42,10 +44,10 @@ Print a status line at the **start and completion of every step and sub-agent**.
 [agent-5]  ├ DONE   → ~/.claude/runs/implement/{{prompt-slug}}/drafts/agent-5/{{project}}
 [agent-2]  ├ DONE   → ~/.claude/runs/implement/{{prompt-slug}}/drafts/agent-2/{{project}}
 [agent-4]  ├ DONE   → ~/.claude/runs/implement/{{prompt-slug}}/drafts/agent-4/{{project}}
-[workflow] └ DONE   Step 1/4 — all 5 agents complete
+[workflow] └ DONE   Step 1/4 — all {AGENT_COUNT} agents complete
 
 [workflow] ┌ Step 2/4 — Selection
-[selector] ├ START  comparing 5 implementations
+[selector] ├ START  comparing {AGENT_COUNT} implementations
 [selector] ├ DONE   selected agent-3 — clearest separation of concerns, smallest diff
 [selector] ├        rejected: agent-1 (redundant abstraction), agent-2 (missing error handling),
 [selector] ├                  agent-4 (inconsistent naming), agent-5 (test coverage gaps)
@@ -101,8 +103,7 @@ Full layout:
     agent-1/{{project}}/                 ← agent 1's isolated git worktree
     agent-2/{{project}}/                 ← agent 2's isolated git worktree
     agent-3/{{project}}/
-    agent-4/{{project}}/
-    agent-5/{{project}}/
+    ...                                  ← up to agent-{AGENT_COUNT}/{{project}}/
   solution/
     {{project}}/                         ← git worktree on branch solution/{{prompt-slug}}, seeded from the winning draft
   reviews/
@@ -121,11 +122,26 @@ Before launching agents, write two files to the prompt slug directory:
 - **`README.md`** — a human-readable summary of the goals, background, and requirements behind the task. Written for a future reader who wants to understand *why* this work was done and *what* it was meant to accomplish. Derived from the original prompt and any linked tickets or context provided.
 - **`SPEC.md`** — the full optimized prompt text used to drive the implementation agents.
 
-## Step 1 — Parallel Implementation (5 Worktrees)
+## Complexity Assessment
+
+Before Step 1, assess whether the task is simple or complex to determine agent count.
+
+**Simple (3 agents):** single-file change, clear bug with obvious fix, narrow scope, no cross-cutting concerns, no auth/payments/migrations touched.
+
+**Complex (5 agents):** multi-file changes, architectural impact, ambiguous or multi-part requirements, touches auth/payments/data integrity, database migrations, or cross-cutting concerns.
+
+Set AGENT_COUNT = 3 (simple) or 5 (complex). Print:
+```
+[workflow] agent count: N — simple|complex task (<one-line reason>)
+```
+
+All references to "5 sub-agents" or "5 agents" in subsequent steps use AGENT_COUNT instead.
+
+## Step 1 — Parallel Implementation (AGENT_COUNT Worktrees)
 
 Print `[workflow] ┌ Step 1/4 — Parallel Implementation` before starting.
 
-Launch **5 sub-agents in parallel**, each in an isolated git draft stored at:
+Launch **AGENT_COUNT sub-agents in parallel**, each in an isolated git draft stored at:
 ```
 /Users/{{user}}/.claude/implementations/{{prompt-slug}}/drafts/agent-N/{{project}}/
 ```
@@ -165,15 +181,15 @@ For each agent:
 
 If a CI step fails and cannot be fixed, the agent must note it prominently — the selection agent will penalize implementations with CI failures.
 
-Print `[workflow] └ DONE   Step 1/4 — all 5 agents complete` once all agents have finished.
+Print `[workflow] └ DONE   Step 1/4 — all {AGENT_COUNT} agents complete` once all agents have finished.
 
 ## Step 2 — Selection Agent
 
 Print `[workflow] ┌ Step 2/4 — Selection` before starting.
-Print `[selector] ├ START  comparing 5 implementations` when the selection agent launches.
+Print `[selector] ├ START  comparing {AGENT_COUNT} implementations` when the selection agent launches.
 
 Launch a **selection agent** that:
-- Reviews all 5 implementations side-by-side
+- Reviews all {AGENT_COUNT} implementations side-by-side
 - Evaluates each against: correctness, code clarity, DRY adherence, implementation consistency, test coverage, minimal diff size, **and CI results** (a passing build/tests with ≥80% coverage is a hard requirement — implementations that failed CI and couldn't self-correct are eliminated first)
 - **Requires TDD discipline** — eliminates any implementation where tests were not written before implementation code. For bug fixes: the reproduction test must have failed against the pre-fix code. For features: tests must have failed before any implementation existed. Implementations with no evidence of a red phase, or tests that couldn't have failed before the change, are disqualified.
 - **Strongly prefers** the implementation with the smallest, most focused diff — an implementation that touches fewer files and introduces no unnecessary abstractions scores higher, all else being equal
@@ -181,18 +197,18 @@ Launch a **selection agent** that:
 - Picks the single best implementation and explains why the others were rejected
 - Writes `~/.claude/runs/implement/{{prompt-slug}}/SELECTION_REASONING.md` containing:
   - A **summary of each agent's implementation** — what approach it took, which files it changed, and notable design decisions
-  - A **divergence analysis** — assessing how much the 5 drafts actually differed from each other, covering:
+  - A **divergence analysis** — assessing how much the {AGENT_COUNT} drafts actually differed from each other, covering:
     - **Structural divergence**: Did agents converge on the same file changes and call sites, or did they take meaningfully different approaches to where logic lives?
     - **Logical decisions**: List the key decision points in the implementation (e.g., "where to validate input", "whether to add a helper vs inline", "how to handle the error case") and for each, how many agents made each choice
     - **Test strategy divergence**: Did agents write similar tests or did they cover different scenarios / use different patterns?
-    - **Convergence verdict**: A plain-English summary — e.g. "4 of 5 agents produced nearly identical implementations; running in parallel added little value here" vs "agents diverged significantly across 3 distinct approaches; parallelism surfaced real design tradeoffs"
+    - **Convergence verdict**: A plain-English summary — e.g. "most agents produced nearly identical implementations; running in parallel added little value here" vs "agents diverged significantly across 3 distinct approaches; parallelism surfaced real design tradeoffs"
   - The **selection decision** — which agent was chosen and the specific reasons it won
   - The **rejection reasons** for each losing agent — concrete, per-agent explanations referencing diff size, design choices, CI results, TDD adherence, etc.
 - Creates a git worktree for the solution by:
   1. Getting the HEAD SHA from the winning draft: `git -C <winning-draft-path> rev-parse HEAD`
   2. Creating a branch in the original repo at that SHA: `git -C <repo-root> branch solution/{{prompt-slug}} <sha>`
   3. Adding a worktree at the solution path: `git -C <repo-root> worktree add ~/.claude/runs/implement/{{prompt-slug}}/solution/{{project}} solution/{{prompt-slug}}`
-- **Never deletes any drafts** — all 5 drafts are preserved in `drafts/agent-N/` for later analysis
+- **Never deletes any drafts** — all {AGENT_COUNT} drafts are preserved in `drafts/agent-N/` for later analysis
 
 When the selection agent completes, print:
 ```
@@ -319,7 +335,7 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
 ## Notes
 - Work artifacts for every execution are preserved at `~/.claude/runs/implement/` for inspection
 - Review history (findings + applied fixes per iteration) lives at `reviews/iteration-N/`
-- All 5 agent drafts are always preserved in `drafts/agent-N/` — never delete them; clean up `~/.claude/runs/implement/` manually when done
+- All {AGENT_COUNT} agent drafts are always preserved in `drafts/agent-N/` — never delete them; clean up `~/.claude/runs/implement/` manually when done
 - Each review iteration should be stricter than the last — do not re-raise issues already resolved
 - The fix agent must not introduce new issues while resolving existing ones
 - The reviewer agent must always reference `~/.claude/CODE_REVIEW.md` — never improvise review criteria
