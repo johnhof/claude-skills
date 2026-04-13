@@ -10,8 +10,8 @@ Before starting any step, check whether a run directory for this prompt already 
 |-----------|-----------|
 | Implementations directory does not exist | Step 1 — full start |
 | Implementations directory exists, all drafts are empty or absent | Step 1 — re-run agents |
-| All 5 drafts contain implementations, but `solution/` is empty or absent | Step 2 — selection |
-| `solution/` contains files, `reviews/` is empty or absent | Step 3 — iteration 1 |
+| All 5 drafts contain implementations, but `solution/{{project}}/` is absent or not a git worktree | Step 2 — selection |
+| `solution/{{project}}/` is a valid git worktree, `reviews/` is empty or absent | Step 3 — iteration 1 |
 | `reviews/iteration-N/review.md` exists and contains `APPROVED` | Step 4 — finalize |
 | `reviews/iteration-N/review.md` exists but no `APPROVED` found, and no `iteration-N+1/` exists | Step 3 — iteration N+1 (continue review cycle) |
 | `reviews/iteration-N/review.md` exists and `CHANGES REQUESTED`, but `reviews/iteration-N/changes.md` is absent | Step 3 — re-run fix agent for iteration N |
@@ -49,7 +49,7 @@ Print a status line at the **start and completion of every step and sub-agent**.
 [selector] ├ DONE   selected agent-3 — clearest separation of concerns, smallest diff
 [selector] ├        rejected: agent-1 (redundant abstraction), agent-2 (missing error handling),
 [selector] ├                  agent-4 (inconsistent naming), agent-5 (test coverage gaps)
-[selector] ├        solution → ~/.claude/runs/implement/{{prompt-slug}}/solution
+[selector] ├        solution → ~/.claude/runs/implement/{{prompt-slug}}/solution/{{project}}
 [workflow] └ DONE   Step 2/4
 
 [workflow] ┌ Step 3/4 — Review iteration 1 of 5
@@ -98,12 +98,13 @@ Full layout:
   SPEC.md                                ← full optimized prompt used to drive implementation
   SELECTION_REASONING.md                 ← per-agent summaries and selection rationale
   drafts/
-    agent-1/{{project}}/                 ← agent 1's isolated git draft
-    agent-2/{{project}}/                 ← agent 2's isolated git draft
+    agent-1/{{project}}/                 ← agent 1's isolated git worktree
+    agent-2/{{project}}/                 ← agent 2's isolated git worktree
     agent-3/{{project}}/
     agent-4/{{project}}/
     agent-5/{{project}}/
-  solution/                              ← copy of the winning draft after selection
+  solution/
+    {{project}}/                         ← git worktree on branch solution/{{prompt-slug}}, seeded from the winning draft
   reviews/
     iteration-1/
       review.md                          ← structured reviewer findings
@@ -179,7 +180,10 @@ Launch a **selection agent** that:
     - **Convergence verdict**: A plain-English summary — e.g. "4 of 5 agents produced nearly identical implementations; running in parallel added little value here" vs "agents diverged significantly across 3 distinct approaches; parallelism surfaced real design tradeoffs"
   - The **selection decision** — which agent was chosen and the specific reasons it won
   - The **rejection reasons** for each losing agent — concrete, per-agent explanations referencing diff size, design choices, CI results, TDD adherence, etc.
-- Copies the winning draft contents into the absolute path of `~/.claude/runs/implement/{{prompt-slug}}/solution/`
+- Creates a git worktree for the solution by:
+  1. Getting the HEAD SHA from the winning draft: `git -C <winning-draft-path> rev-parse HEAD`
+  2. Creating a branch in the original repo at that SHA: `git -C <repo-root> branch solution/{{prompt-slug}} <sha>`
+  3. Adding a worktree at the solution path: `git -C <repo-root> worktree add ~/.claude/runs/implement/{{prompt-slug}}/solution/{{project}} solution/{{prompt-slug}}`
 - **Never deletes any drafts** — all 5 drafts are preserved in `drafts/agent-N/` for later analysis
 
 When the selection agent completes, print:
@@ -261,19 +265,25 @@ Increment the iteration counter and return to Pre-Review Main Sync.
 
 Print `[workflow] ┌ Step 4/4 — Finalize` before starting.
 
-1. In the original repo, create a branch:
+The solution is already a git worktree on branch `solution/{{prompt-slug}}` with all commits in place. Finalization is a rename and push:
+
+1. Rename the solution branch to the final branch name:
    - `feature/{{prompt-slug}}` for new features
    - `fix/{{prompt-slug}}` for bug fixes
-2. Copy all changed files from `solution/` into the repo on that branch
-3. Stage and commit using a Conventional Commits message summarizing the change
+   ```bash
+   git -C <solution-worktree-path> branch -m solution/{{prompt-slug}} <final-branch-name>
+   ```
 
    Print:
    ```
    [git]      ├ START  creating branch <branch-name>
-   [git]      ├ DONE   committed — "<conventional-commit-message>"
+   [git]      ├ DONE   branch ready — "<conventional-commit-message>"
    ```
 
-4. Push the branch to remote: `git push -u origin <branch>`
+2. Push the branch to remote:
+   ```bash
+   git -C <solution-worktree-path> push -u origin <final-branch-name>
+   ```
 
    Print:
    ```
