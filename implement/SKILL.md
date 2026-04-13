@@ -136,11 +136,19 @@ Each agent implements the approved prompt independently and may diverge in appro
 - **Surgical diffs**: the diff should be as small as possible. Every line changed must be justified by a direct requirement of the task.
 - **Simple design**: prefer the simplest solution that correctly satisfies the requirements. Avoid new abstractions, helpers, or patterns unless the task explicitly demands them. When in doubt, inline it.
 
-Each agent must follow **red/green TDD** — tests are written before implementation code:
+Each agent must follow **red/green TDD**. The red phase differs depending on whether the task is a bug fix or a feature:
 
+**Bug fix:**
+1. **Reproduce** — write a test (or minimal set of tests) that directly exercises the buggy behavior and fails against the current code. Run it and confirm it fails for the right reason — the test must demonstrate the bug, not just pass trivially or fail for an unrelated reason. Do not touch implementation code until the reproduction test is reliably failing.
+2. **Green** — fix the minimum amount of implementation code needed to make the failing test(s) pass. Run the full test suite and confirm all tests are green.
+3. **Refactor** — clean up the fix without changing behavior. Re-run tests to confirm still green.
+
+**Feature:**
 1. **Red** — write all tests for the new behavior first. Run them and confirm they fail (if they pass before implementation exists, the tests are wrong — fix them). Do not write any implementation code until tests are failing for the right reason.
 2. **Green** — write the minimum implementation code needed to make the failing tests pass. Run tests again and confirm they are all green.
 3. **Refactor** — clean up the implementation (not the tests) without changing behavior. Re-run tests to confirm still green.
+
+In both cases, the end result must be a test or set of tests that were failing before the implementation and are passing after. Tests must be written using the repo's existing testing harness — do not introduce a new test framework.
 
 Each agent must, after completing the red/green/refactor cycle:
 1. **Detect CI steps** — inspect the repo for CI configuration (`.github/workflows/`, `Makefile`, `package.json` scripts, `Taskfile`, `circle.yml`, etc.) and identify build, lint, and test steps
@@ -150,7 +158,7 @@ Each agent must, after completing the red/green/refactor cycle:
 
 For each agent:
 - Print `[agent-N] ├ START  → <absolute-draft-path>` immediately when the agent is launched
-- Print `[agent-N] ├ red    tests written — N failing` after the red step
+- Print `[agent-N] ├ red    tests written — N failing` after the red step (for bug fixes: `[agent-N] ├ repro   bug reproduced — N failing`)
 - Print `[agent-N] ├ green  tests passing — N passed` after the green step
 - Print `[agent-N] ├ ci     build: PASS | lint: PASS | tests: PASS (coverage: 84%)` (or FAIL with reason) as CI results come in
 - Print `[agent-N] ├ DONE   → <absolute-draft-path>` when the agent finishes
@@ -167,7 +175,7 @@ Print `[selector] ├ START  comparing 5 implementations` when the selection age
 Launch a **selection agent** that:
 - Reviews all 5 implementations side-by-side
 - Evaluates each against: correctness, code clarity, DRY adherence, implementation consistency, test coverage, minimal diff size, **and CI results** (a passing build/tests with ≥80% coverage is a hard requirement — implementations that failed CI and couldn't self-correct are eliminated first)
-- **Requires TDD discipline** — eliminates any implementation where tests were not written before implementation code (i.e., no evidence of a red phase, or tests that couldn't have failed before the implementation existed)
+- **Requires TDD discipline** — eliminates any implementation where tests were not written before implementation code. For bug fixes: the reproduction test must have failed against the pre-fix code. For features: tests must have failed before any implementation existed. Implementations with no evidence of a red phase, or tests that couldn't have failed before the change, are disqualified.
 - **Strongly prefers** the implementation with the smallest, most focused diff — an implementation that touches fewer files and introduces no unnecessary abstractions scores higher, all else being equal
 - **Penalizes** any implementation that refactors or reformats code outside the required scope, introduces new helper abstractions not demanded by the task, or over-engineers a simple problem
 - Picks the single best implementation and explains why the others were rejected
