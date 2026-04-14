@@ -226,14 +226,20 @@ Work on the checked-out head branch of the PR. For each fix plan:
    ```bash
    git rev-parse HEAD
    ```
-6. Post a reply to each comment addressed by this commit:
+6. Post a reply **directly to each comment** addressed by this commit. Use the same `gh api` endpoints as Step 4. The reply must:
+   - Reference the exact commit with a full GitHub URL
+   - Describe specifically what was changed and why it addresses the comment — not just a link
+   - Be written for the reviewer who left the comment so they can confirm their concern was understood
+
+   Format:
    ```
-   Addressed in <owner>/<repo>/commit/<sha> — <one-line description of what changed>.
+   Addressed in [<short-sha>](<full-commit-url>).
+
+   <2–4 sentences: what was changed, where, and how it resolves the reviewer's concern. If the reviewer's suggestion was followed exactly, say so. If a different approach was taken, explain why.>
 
    ---
    🤖 PR Helper
    ```
-   Use the same `gh api` endpoints as Step 4. Include the full GitHub commit URL so the commenter can review the isolated change.
 
 **Do not resolve or dismiss any comments.** Leave resolution to humans.
 
@@ -269,7 +275,45 @@ Check for remaining blockers:
 
 ---
 
-## Step 8 — Poll Until Merged
+## Step 8 — Post Summary Comment
+
+After all fixes are committed, CI is green, and blockers are resolved, post a **single top-level summary comment** on the PR via:
+```bash
+gh api /repos/{owner}/{repo}/issues/{number}/comments \
+  -f body="<body>"
+```
+
+The comment body must follow this format:
+
+```
+## PR Helper Run Summary
+
+**N comments addressed · N commits pushed · CI <✅ passing | ❌ N failing>**
+
+### Comments
+
+| # | Reviewer | Comment | Resolution |
+|---|----------|---------|------------|
+| 1 | @alice | <one-phrase summary of their comment> | Fixed in [abc1234](<url>) — <one sentence what changed> |
+| 2 | @bob | <one-phrase summary> | Not actionable — <one sentence explanation> |
+| 3 | @charlie | <one-phrase summary> | Invalid — <one sentence explanation> |
+
+### Commits
+- [`abc1234`](<url>) fix: <message>
+- [`def5678`](<url>) fix: <message>
+
+---
+🤖 PR Helper
+```
+
+Rules:
+- Every comment that was evaluated must appear in the table — fixed, invalid, and not-actionable alike
+- The "Resolution" column must be a self-contained sentence: a reviewer skimming only this table should understand what happened without reading the thread
+- Fixed comments must include the commit link; invalid/not-actionable must include the one-line reason
+
+---
+
+## Step 9 — Poll Until Merged
 
 Once all actionable items are addressed, enter a polling loop:
 
@@ -284,7 +328,7 @@ Print on each poll:
 ```
 
 Check on each poll:
-- **New comments** since last check → increment cycle counter, open new `CYCLE_#.md`, loop back to Step 2 for new comments only
+- **New comments** since last check → increment cycle counter, open new `CYCLE_#.md`, loop back to Step 2 for new comments only, then re-run Step 8 to update the summary comment
 - **New CI failures** → increment cycle counter, open new `CYCLE_#.md`, loop back to Step 6
 - **PR merged** → print the completion message and exit:
 

@@ -80,6 +80,12 @@ The example below shows the max (AGENT_COUNT=5) case; for simple tasks with 3 ag
 [gh]       ├ START  opening draft PR
 [gh]       ├ DONE   https://github.com/{{org}}/{{project}}/pull/{{number}}
 [workflow] └ DONE   Step 4/4
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Implementation Summary — {{prompt-slug}}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+... (see Step 4 for full format)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 Every directory path printed must be the full absolute path (expand `~` to the actual home directory) so terminals render it as a clickable file link.
@@ -326,6 +332,59 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
    ```
 
 6. Run `/arbiter` to generate a review link and present it to the user
+
+7. Print a **human-readable run summary** directly to the terminal. This is the final output the user sees — make it scannable and include absolute path links for every artifact so the user can drill in without hunting.
+
+   Format:
+   ```
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Implementation Summary — {{prompt-slug}}
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   ## Agents  →  <absolute-path-to-drafts-dir>
+
+   agent-1  <1–4 sentence description of what this agent did: approach taken,
+            files changed, notable design decisions, CI result>
+            <absolute-path-to-agent-1-worktree>
+
+   agent-2  <same>
+            <absolute-path-to-agent-2-worktree>
+
+   ... (one block per agent)
+
+   ## Selection  →  <absolute-path-to-SELECTION_REASONING.md>
+
+   Chose agent-N. <1–4 sentences: why this agent won — what specifically made it
+   better than the others, e.g. smallest diff, cleanest error handling, only one
+   with timing-safe comparison, etc.>
+
+   ## Review  →  <absolute-path-to-reviews-dir>
+
+   Iteration 1 — CHANGES REQUESTED
+     Finding: <1-sentence summary of finding>  →  <absolute-path-to-review.md>
+     Fix:     <1-sentence summary of fix applied>  →  <absolute-path-to-changes.md>
+
+   Iteration 2 — APPROVED
+     report  →  <absolute-path-to-review.md>
+
+   (one block per iteration; omit changes.md line for APPROVED iterations)
+
+   ## Final Solution  →  <absolute-path-to-solution-worktree>
+
+   <3–6 sentences describing the final implementation: what files were changed,
+   what the core logic does, how it is tested, and anything notable about the
+   approach. Written for a reviewer seeing this for the first time.>
+
+   PR  →  <full-pr-url>
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ```
+
+   Rules for the summary:
+   - Every section header includes an absolute path link to the directory or file where more detail lives
+   - Agent summaries are factual, not evaluative — describe what each agent *did*, not whether it was good
+   - Selection rationale is concrete — name the specific properties that decided the winner, not generic praise
+   - Review findings are one sentence each — the finding name and the fix applied; omit Minors and Nits unless they were the only findings
+   - Final solution description is written for someone who has not read any of the artifacts
 
    Print:
    ```
