@@ -63,6 +63,57 @@ Print a summary of what was discovered:
 
 ---
 
+## Step 2b — Fetch Silver Layer Comments
+
+Open the Aptible tunnel (reuse if already running) and query `pg_description` to capture `COMMENT ON` documentation for all silver-layer objects:
+
+```bash
+export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
+nc -z 127.0.0.1 15441 || (
+  tmux kill-session -t aptible-tunnel 2>/dev/null
+  tmux new-session -d -s aptible-tunnel \
+    "aptible db:tunnel data-warehouse --environment noho-production --type postgresql --port 15441"
+  sleep 12
+)
+```
+
+```sql
+-- Schema comments
+SELECT nspname AS schema_name,
+       obj_description(oid, 'pg_namespace') AS comment
+FROM pg_namespace
+WHERE nspname IN ('silver', 'silver_clinical', 'transform_references')
+ORDER BY nspname;
+
+-- View/table comments
+SELECT n.nspname AS schema_name,
+       c.relname AS object_name,
+       CASE c.relkind WHEN 'v' THEN 'view' WHEN 'r' THEN 'table' WHEN 'm' THEN 'matview' END AS kind,
+       obj_description(c.oid, 'pg_class') AS comment
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname IN ('silver', 'silver_clinical', 'transform_references')
+  AND c.relkind IN ('v', 'r', 'm')
+ORDER BY n.nspname, c.relname;
+
+-- Column comments for silver views
+SELECT n.nspname AS schema_name,
+       c.relname AS table_name,
+       a.attname AS column_name,
+       col_description(c.oid, a.attnum) AS comment
+FROM pg_attribute a
+JOIN pg_class c ON c.oid = a.attrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname IN ('silver', 'silver_clinical', 'transform_references')
+  AND a.attnum > 0
+  AND col_description(c.oid, a.attnum) IS NOT NULL
+ORDER BY n.nspname, c.relname, a.attnum;
+```
+
+Store these comments — they will be included verbatim in the Silver Layer section of the reference document.
+
+---
+
 ## Step 3 — Sample Key Tables
 
 For each table, run a row count and a sample query via the Metabase dataset API:
@@ -172,6 +223,33 @@ The document must follow this structure:
 
 ---
 <Repeat for each schema>
+
+---
+
+## Silver Layer
+
+> These are hand-crafted views that clean and filter bronze data. Descriptions are pulled from native PostgreSQL `COMMENT ON` metadata — update them with `COMMENT ON VIEW <view> IS '...'`.
+
+### Schema: `silver`
+<schema comment from pg_description>
+
+| View | Description | Source Table |
+|---|---|---|
+<one row per view, using the comment from pg_description as the description>
+
+### Schema: `silver_clinical`
+<schema comment from pg_description>
+
+| Table | Description |
+|---|---|
+<one row per table>
+
+### Schema: `transform_references`
+<schema comment from pg_description>
+
+| Table | Description |
+|---|---|
+<one row per table>
 
 ---
 
