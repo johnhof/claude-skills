@@ -369,9 +369,9 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
 
    (one block per iteration; omit changes.md line for APPROVED iterations)
 
-   ## Final Solution  →  <absolute-path-to-solution-worktree>
+   ## Complete Solution  →  <absolute-path-to-solution-worktree>
 
-   <3–6 sentences describing the final implementation: what files were changed,
+   <3–6 sentences describing the complete implementation: what files were changed,
    what the core logic does, how it is tested, and anything notable about the
    approach. Written for a reviewer seeing this for the first time.>
 
@@ -384,7 +384,7 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
    - Agent summaries are factual, not evaluative — describe what each agent *did*, not whether it was good
    - Selection rationale is concrete — name the specific properties that decided the winner, not generic praise
    - Review findings are one sentence each — the finding name and the fix applied; omit Minors and Nits unless they were the only findings
-   - Final solution description is written for someone who has not read any of the artifacts
+   - Complete solution description is written for someone who has not read any of the artifacts
 
    Print:
    ```

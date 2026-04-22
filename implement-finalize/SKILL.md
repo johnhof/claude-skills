@@ -94,7 +94,7 @@ Iteration 1 — CHANGES REQUESTED
 Iteration 2 — APPROVED
   report  →  <path-to-review.md>
 
-## Final Solution  →  <absolute-path-to-solution-worktree>
+## Complete Solution  →  <absolute-path-to-solution-worktree>
 
 <3–6 sentences: what files changed, core logic, how it's tested, anything notable>
 

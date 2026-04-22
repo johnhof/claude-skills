@@ -268,8 +268,40 @@ For each failing job:
 
 ## Step 7 — Other Blockers
 
-Check for remaining blockers:
-- **Merge conflicts** — attempt to rebase or merge the base branch and resolve conflicts; commit and push
+### Merge Conflicts (REQUIRED — must be resolved before proceeding)
+
+If the PR has merge conflicts, resolving them is **mandatory**. The PR cannot proceed until all conflicts are gone. Do not skip or defer this step.
+
+1. Fetch the latest base branch:
+   ```bash
+   git fetch origin
+   ```
+2. Rebase onto the base branch:
+   ```bash
+   git rebase origin/<base-branch>
+   ```
+3. For each file with conflicts, open it and resolve every conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`). Do not leave any markers in the file.
+4. Stage each resolved file:
+   ```bash
+   git add <resolved-file>
+   ```
+5. Continue the rebase:
+   ```bash
+   git rebase --continue
+   ```
+   Repeat steps 3–5 until the rebase completes with no remaining conflicts.
+6. Push the rebased branch (force-push required after rebase):
+   ```bash
+   git push --force-with-lease origin <head-branch>
+   ```
+7. Verify the PR no longer shows conflicts:
+   ```bash
+   gh pr view <number> --json mergeable
+   ```
+   If `mergeable` is not `MERGEABLE`, repeat from step 1.
+
+### Other Blockers
+
 - **Required reviews not yet approved** — post a top-level comment tagging the required reviewers that the PR is ready for re-review (do not attempt to bypass)
 - **Branch protection / status checks still pending** — note them but do not attempt to bypass
 
