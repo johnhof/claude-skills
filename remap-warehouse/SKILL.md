@@ -9,6 +9,14 @@ Scans the live data warehouse via the Metabase API and rewrites `.claude/WAREHOU
 
 **Runs fully autonomously — no user interaction required after invocation.**
 
+> **Note:** The core logic lives in `dagster/scripts/remap_warehouse.py` — a standalone Python script that is also invoked by the `warehouse_reference` Dagster asset. When Claude Code invokes this skill, it should call that script directly rather than reimplementing the logic:
+>
+> ```bash
+> METABASE_PASSWORD=<password> python dagster/scripts/remap_warehouse.py
+> ```
+>
+> Only fall back to the manual steps below if the script is unavailable or needs extending.
+
 ---
 
 ## Target File
