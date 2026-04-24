@@ -182,7 +182,7 @@ Print the full plan to the user **without waiting for interaction**:
 
 **Without waiting for user input**, post responses to all invalid and not-actionable comments immediately, before making any code changes.
 
-For each **invalid or not-actionable** comment, post a reply via:
+For each **invalid or not-actionable** comment, post a reply **directly on the comment thread** via:
 ```bash
 gh api /repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
   -f body="<explanation>
@@ -206,6 +206,8 @@ gh api /repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions \
   -X POST -f content="+1"
 ```
 
+> These 👍-reacted comments will each receive a detailed individual reply in Step 5 after their fix is committed.
+
 ---
 
 ## Step 5 — Execute Fix Commits
@@ -226,16 +228,21 @@ Work on the checked-out head branch of the PR. For each fix plan:
    ```bash
    git rev-parse HEAD
    ```
-6. Post a reply **directly to each comment** addressed by this commit. Use the same `gh api` endpoints as Step 4. The reply must:
-   - Reference the exact commit with a full GitHub URL
-   - Describe specifically what was changed and why it addresses the comment — not just a link
-   - Be written for the reviewer who left the comment so they can confirm their concern was understood
+6. Post a reply **directly on each comment's thread** addressed by this commit. Use the same `gh api` endpoints as Step 4. This is **required** — the summary comment in Step 8 alone is not sufficient; every fixed comment must receive an individual reply.
+
+   The reply must include all four elements:
+   - A link to the commit in the PR's commit view: `https://github.com/{owner}/{repo}/pull/{N}/commits/{sha}`
+   - A "view diff" link using the same URL (so the reviewer can see exactly what changed)
+   - **What changed** — a concrete description of the code change
+   - **Why it works** — an explanation of why the change resolves the reviewer's concern
 
    Format:
    ```
-   Addressed in [<short-sha>](<full-commit-url>).
+   Addressed in [`<short-sha>`](https://github.com/{owner}/{repo}/pull/{N}/commits/{sha}) ([view diff](https://github.com/{owner}/{repo}/pull/{N}/commits/{sha})).
 
-   <2–4 sentences: what was changed, where, and how it resolves the reviewer's concern. If the reviewer's suggestion was followed exactly, say so. If a different approach was taken, explain why.>
+   **What changed:** <concrete description of the code change made>
+
+   **Why it works:** <explanation of why this resolves the reviewer's concern. If the reviewer's suggestion was followed exactly, say so. If a different approach was taken, explain why.>
 
    ---
    🤖 PR Helper

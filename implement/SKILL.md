@@ -105,6 +105,13 @@ Full layout:
   README.md                              ← goals, background, and requirements from the original prompt (context for a future reader)
   SPEC.md                                ← full optimized prompt used to drive implementation
   SELECTION_REASONING.md                 ← per-agent summaries and selection rationale
+  resources/
+    linear-ticket.md                     ← full Linear ticket dump (title, description, ACs, comments) — present if a ticket was provided
+    figma-<node-slug>.md                 ← design context for each resolved Figma link
+    github-issue-<number>.md             ← GitHub issue content for each resolved issue link
+    github-pr-<number>.md                ← GitHub PR content for each resolved PR link
+    url-<slug>.md                        ← fetched content for each other URL found in the prompt or ticket
+    file-<name>.md                       ← content of each local file path referenced in the prompt
   drafts/
     agent-1/{{project}}/                 ← agent 1's isolated git worktree
     agent-2/{{project}}/                 ← agent 2's isolated git worktree
@@ -127,6 +134,62 @@ Where `{{project}}` is the basename of the git root of the repo being modified.
 Before launching agents, write two files to the prompt slug directory:
 - **`README.md`** — a human-readable summary of the goals, background, and requirements behind the task. Written for a future reader who wants to understand *why* this work was done and *what* it was meant to accomplish. Derived from the original prompt and any linked tickets or context provided.
 - **`SPEC.md`** — the full optimized prompt text used to drive the implementation agents.
+
+## Resource Resolution
+
+After writing README.md and SPEC.md, resolve all referenced resources — from both the command-line arguments and the Linear ticket (if one was provided) — and persist their contents under `resources/`. This step must complete before any agents are launched.
+
+### What to resolve
+
+**Linear ticket** (always, if a ticket ID or URL was provided):
+- Make **two separate MCP calls**: `get_issue` (title, description, attachments, linked issues) and `list_comments` (all comment threads) — comments are not returned by `get_issue` and must be fetched explicitly
+- Save to `resources/linear-ticket.md`
+- Include: ticket ID, title, status, assignee, description (full text), acceptance criteria, and all comment threads (author + body for every comment)
+
+**Figma links** (any `figma.com` URL found in the prompt, ticket description, ticket attachments, or ticket comments):
+- For each Figma link, extract `fileKey` and `nodeId` from the URL and call `get_design_context`
+- Save the full design context (including any generated code, component notes, and layout details) to `resources/figma-<node-slug>.md` (e.g. `figma-471-1215.md`)
+- Also call `get_metadata` and append the layer tree to the same file
+
+**GitHub issue or PR links** (any `github.com/.../issues/...` or `github.com/.../pull/...` URL):
+- Fetch using `gh issue view <url> --json title,body,comments,labels` or `gh pr view <url> --json title,body,comments,reviews`
+- Save to `resources/github-issue-<number>.md` or `resources/github-pr-<number>.md`
+
+**Other URLs** (any `http://` or `https://` link in the prompt or ticket that is not Figma or GitHub):
+- Fetch using WebFetch
+- Save to `resources/url-<slug>.md` where `<slug>` is a kebab-case version of the URL path
+
+**Local file paths** (any file path mentioned in the prompt or ticket that exists on disk):
+- Read the file
+- Save a copy to `resources/file-<basename>.md` (or preserve the extension if it's a text format)
+
+### How resources inform the workflow
+
+After resolving, every agent launched in subsequent steps must be given:
+1. The absolute path to the `resources/` directory
+2. An explicit instruction to read **all files** there before beginning work
+
+Specifically:
+- **Implementation agents (Step 1)**: read all resources before planning or writing any code — treat Figma designs and ticket acceptance criteria as requirements that must be satisfied
+- **Selection agent (Step 2)**: penalize any implementation that ignores or contradicts content found in resources (e.g. a Figma spec, a ticket requirement, or a referenced API contract)
+- **Reviewer agent (Step 3)**: treat resource content as the authoritative requirements source — verify the implementation satisfies every acceptance criterion, design spec, and linked specification present in `resources/`
+
+### Observability
+
+Print one line per resource resolved:
+
+```
+[resources] ┌ resolving external resources
+[resources] ├ linear-ticket   → <absolute-path>/resources/linear-ticket.md
+[resources] ├ figma            → <absolute-path>/resources/figma-471-1215.md
+[resources] ├ url              → <absolute-path>/resources/url-stripe-api.md
+[resources] └ DONE             N resource(s) resolved → <absolute-path>/resources/
+```
+
+If no resources are found (no ticket, no links, no file paths), print:
+```
+[resources] └ SKIP  no external resources detected
+```
 
 ## Complexity Assessment
 
@@ -152,7 +215,11 @@ Launch **AGENT_COUNT sub-agents in parallel**, each in an isolated git draft sto
 /Users/{{user}}/.claude/implementations/{{prompt-slug}}/drafts/agent-N/{{project}}/
 ```
 
-Each agent implements the approved prompt independently and may diverge in approach — that is intentional. Give each agent the full optimized prompt plus the instruction to implement it completely, with the following non-negotiable constraints:
+Each agent implements the approved prompt independently and may diverge in approach — that is intentional. Give each agent the full optimized prompt plus:
+- The absolute path to `~/.claude/runs/implement/{{prompt-slug}}/resources/`
+- An explicit instruction to **read every file in `resources/` before writing any code** — these files contain resolved Figma designs, Linear ticket details, GitHub issues, and other referenced documents that define what correct looks like
+
+Include the following non-negotiable constraints:
 
 - **Minimal invasiveness**: touch only the files and lines required to satisfy the prompt. Do not refactor, reformat, or "clean up" surrounding code that isn't directly part of the change.
 - **Surgical diffs**: the diff should be as small as possible. Every line changed must be justified by a direct requirement of the task.
@@ -248,10 +315,12 @@ In the solution draft:
 Print `[reviewer] ├ START  scanning diff + codebase context` when the reviewer agent launches.
 
 Launch a **reviewer agent** that:
+- **Reads all files in `~/.claude/runs/implement/{{prompt-slug}}/resources/` first** — these are the authoritative requirements: Linear ticket ACs, Figma designs, linked specs, etc. Verify the implementation satisfies every requirement found there before evaluating code quality
 - Reviews **only the changed files and lines introduced by this implementation** — not pre-existing code
 - Scans the broader codebase for context only (DRY violations, consistency with existing patterns, integration points), but **never raises findings about pre-existing code not touched by this change**
 - Uses `~/.claude/CODE_REVIEW.md` as its rubric, scoped strictly to what was added, modified, or deleted in this diff
 - Every finding must cite the specific file and line number from the diff — findings without a direct diff reference are invalid and must be omitted
+- Unmet requirements from `resources/` (e.g. a missing AC from the Linear ticket, a Figma element not implemented) are automatic **Blockers**
 - **Runs all CI steps** (build, lint, tests, coverage) against the solution and includes the results in the report header; any CI failure is an automatic Blocker; coverage on new code below 80% is an automatic Major
 - Writes the full structured report (CI results → Blockers → Majors → Minors → Nits) to the absolute path of `~/.claude/runs/implement/{{prompt-slug}}/reviews/iteration-N/review.md`
 - Declares either `APPROVED` or `CHANGES REQUESTED`
@@ -335,47 +404,49 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
 
 7. Print a **human-readable run summary** directly to the terminal. This is the final output the user sees — make it scannable and include absolute path links for every artifact so the user can drill in without hunting.
 
-   Format:
+   **Rendering rule: never emit raw markdown syntax.** All formatting must use ANSI escape codes so the output looks rendered, not like a markdown source file:
+   - Section headers: bold + underline — `\033[1m\033[4mHeading\033[0m`
+   - Emphasis / labels: bold — `\033[1mtext\033[0m`
+   - Bullet points: `•` character (not `-`)
+   - No `##`, `**`, `__`, backtick fences, or other markdown punctuation in output
+
+   Format (shown here in pseudo-notation; emit actual ANSI codes, not the escape sequences literally):
    ```
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   Implementation Summary — {{prompt-slug}}
+   [BOLD]Implementation Summary — {{prompt-slug}}[/BOLD]
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-   ## Agents  →  <absolute-path-to-drafts-dir>
+   [BOLD+UNDERLINE]Agents[/BOLD+UNDERLINE]  →  <absolute-path-to-drafts-dir>
 
-   agent-1  <1–4 sentence description of what this agent did: approach taken,
+   [BOLD]agent-1[/BOLD]  <1–4 sentence description of what this agent did: approach taken,
             files changed, notable design decisions, CI result>
             <absolute-path-to-agent-1-worktree>
 
-   agent-2  <same>
+   [BOLD]agent-2[/BOLD]  <same>
             <absolute-path-to-agent-2-worktree>
 
    ... (one block per agent)
 
-   ## Selection  →  <absolute-path-to-SELECTION_REASONING.md>
+   [BOLD+UNDERLINE]Selection[/BOLD+UNDERLINE]  →  <absolute-path-to-SELECTION_REASONING.md>
 
-   Chose agent-N. <1–4 sentences: why this agent won — what specifically made it
-   better than the others, e.g. smallest diff, cleanest error handling, only one
-   with timing-safe comparison, etc.>
+   Chose [BOLD]agent-N[/BOLD]. <1–4 sentences: why this agent won>
 
-   ## Review  →  <absolute-path-to-reviews-dir>
+   [BOLD+UNDERLINE]Review[/BOLD+UNDERLINE]  →  <absolute-path-to-reviews-dir>
 
-   Iteration 1 — CHANGES REQUESTED
-     Finding: <1-sentence summary of finding>  →  <absolute-path-to-review.md>
-     Fix:     <1-sentence summary of fix applied>  →  <absolute-path-to-changes.md>
+   Iteration 1 — [BOLD]CHANGES REQUESTED[/BOLD]
+     Finding: <1-sentence summary>  →  <absolute-path-to-review.md>
+     Fix:     <1-sentence summary>  →  <absolute-path-to-changes.md>
 
-   Iteration 2 — APPROVED
+   Iteration 2 — [BOLD]APPROVED[/BOLD]
      report  →  <absolute-path-to-review.md>
 
    (one block per iteration; omit changes.md line for APPROVED iterations)
 
-   ## Complete Solution  →  <absolute-path-to-solution-worktree>
+   [BOLD+UNDERLINE]Complete Solution[/BOLD+UNDERLINE]  →  <absolute-path-to-solution-worktree>
 
-   <3–6 sentences describing the complete implementation: what files were changed,
-   what the core logic does, how it is tested, and anything notable about the
-   approach. Written for a reviewer seeing this for the first time.>
+   <3–6 sentences describing the complete implementation>
 
-   PR  →  <full-pr-url>
+   [BOLD]PR[/BOLD]  →  <full-pr-url>
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    ```
 
