@@ -79,6 +79,7 @@ The example below shows the max (AGENT_COUNT=5) case; for simple tasks with 3 ag
 [git]      ├ DONE   pushed
 [gh]       ├ START  opening draft PR
 [gh]       ├ DONE   https://github.com/{{org}}/{{project}}/pull/{{number}}
+[pr-helper] ├ START  monitoring https://github.com/{{org}}/{{project}}/pull/{{number}}
 [workflow] └ DONE   Step 4/4
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -400,9 +401,20 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
    [gh]       ├ DONE   <full-pr-url>
    ```
 
-6. Run `/arbiter` to generate a review link and present it to the user
+6. Invoke `/pr-helper` on the newly opened PR to catch initial CI failures and address any early review comments:
+   ```
+   /pr-helper <full-pr-url>
+   ```
+   pr-helper runs autonomously — it will watch CI, fix pipeline failures, and reply to any bot review comments. It polls until the PR merges or is closed.
 
-7. Print a **human-readable run summary** directly to the terminal. This is the final output the user sees — make it scannable and include absolute path links for every artifact so the user can drill in without hunting.
+   Print:
+   ```
+   [pr-helper] ├ START  monitoring <full-pr-url>
+   ```
+
+7. Run `/arbiter` to generate a review link and present it to the user
+
+8. Print a **human-readable run summary** directly to the terminal. This is the final output the user sees — make it scannable and include absolute path links for every artifact so the user can drill in without hunting.
 
    **Rendering rule: never emit raw markdown syntax.** All formatting must use ANSI escape codes so the output looks rendered, not like a markdown source file:
    - Section headers: bold + underline — `\033[1m\033[4mHeading\033[0m`
