@@ -71,7 +71,85 @@ Print a summary of what was discovered:
 
 ---
 
-## Step 2b — Fetch Silver Layer Comments
+## Step 2b — Source Attribution (Trace Fields to Code)
+
+For each warehouse schema, scan the relevant local codebase to identify where each column originates. This produces a `source` annotation for each column in the reference doc.
+
+### Schema → Source mapping
+
+| Warehouse schema | Source system | Where to look |
+|---|---|---|
+| `bronze_app_db_postgres_public` | patient-app NestJS backend | `/Users/johnhofrichter/noho/projects/patient-app/apps/backend/src/**/*.entity.ts` |
+| `bronze_canvas` | Canvas EMR (external SaaS) | No local code — annotate as "Canvas EMR API" |
+| `bronze_stripe_*` | Stripe (via Fivetran) | No local code — annotate as "Stripe / Fivetran" |
+| `bronze_ramp` | Ramp (via Fivetran) | No local code — annotate as "Ramp / Fivetran" |
+| `bronze_braze` | Braze (via Fivetran) | No local code — annotate as "Braze / Fivetran" |
+| `silver_*`, `transform_references` | data-pipeline SQL views | Defined in warehouse DB directly; source from `pg_get_viewdef()` |
+
+### For `bronze_app_db_postgres_public` — TypeORM entity scan
+
+TypeORM maps class names and camelCase properties to snake_case table/column names. Use this to match warehouse columns back to source code:
+
+**Find all entity files:**
+```bash
+find /Users/johnhofrichter/noho/projects/patient-app/apps/backend/src -name "*.entity.ts"
+```
+
+**For each entity file, extract:**
+1. The `@Entity()` class — converts to snake_case table name (e.g. `ShopOrder` → `shop_order`)
+2. Each `@Column()` / `@PrimaryGeneratedColumn()` property — camelCase to snake_case (e.g. `auth0Id` → `auth0_id`, `membershipStripeCustomerId` → `membership_stripe_customer_id`)
+3. The `@ApiProperty({ description: '...' })` on each column — use as human-readable description
+4. The TypeScript type (e.g. `USStateCode | null`) — note nullable status
+
+**camelCase → snake_case conversion rule:**
+Insert `_` before each uppercase letter and lowercase: `membershipType` → `membership_type`, `RUOConsentSignedAt` → `r_u_o_consent_signed_at` (or check actual DB column if uncertain).
+
+**Example output for `user.entity.ts`:**
+
+| Column | Type | Source | Description |
+|---|---|---|---|
+| `id` | int4 | `patient-app/src/users/user.entity.ts:12` `@PrimaryGeneratedColumn()` | User ID |
+| `auth0_id` | varchar | `patient-app/src/users/user.entity.ts:16` `@Column()` | Auth0 user ID |
+| `state` | varchar | `patient-app/src/users/user.entity.ts:54` `@Column()` | User's US state code (e.g. CA) — set during intake |
+
+**Table name matching:** The warehouse table is named `<entity_snake_case>` under `bronze_app_db_postgres_public`. Match by converting the `@Entity()` class name to snake_case.
+
+### For `silver_*` — View definition scan
+
+For silver views, fetch the SQL view definition from the warehouse and include it as the "source":
+
+```sql
+SELECT pg_get_viewdef('silver_membership.membership_subscriptions'::regclass, true);
+```
+
+Annotate each column's source as `silver_<schema>/<view>.sql — derived from <bronze_table>.<column>` based on what appears in the SELECT.
+
+### Attribution format
+
+In the WAREHOUSE_REFERENCE.md column tables, add a **Source** column:
+
+```markdown
+| Column | Type | Source | Notes |
+|---|---|---|---|
+| `state` | varchar | [`user.entity.ts:54`](patient-app/apps/backend/src/users/user.entity.ts) — `@Column() state: USStateCode \| null` | US state code set during intake |
+| `auth0_id` | varchar | [`user.entity.ts:16`](patient-app/apps/backend/src/users/user.entity.ts) — `@Column()` | Auth0 user ID |
+| `_fivetran_synced` | timestamptz | Fivetran internal | Sync timestamp, not a source field |
+```
+
+For external schemas (Canvas, Stripe, Ramp, Braze), use the Source column to note the external system rather than leaving it blank.
+
+Print progress:
+```
+[remap] source attribution: scanning patient-app entities (31 files)...
+[remap]   matched 12/15 columns in bronze_app_db_postgres_public.user
+[remap]   matched 8/8 columns in bronze_app_db_postgres_public.membership
+[remap] source attribution: bronze_canvas → Canvas EMR (no local code)
+[remap] source attribution: bronze_stripe_* → Stripe / Fivetran
+```
+
+---
+
+## Step 2c — Fetch Silver Layer Comments
 
 Open the Aptible tunnel (reuse if already running) and query `pg_description` to capture `COMMENT ON` documentation for all silver-layer objects:
 
@@ -220,9 +298,9 @@ The document must follow this structure:
 #### `<schema>.<table>` — N rows
 <One-sentence description inferred from column names and sample data>
 
-| Column | Type | Notes |
-|---|---|---|
-| col_name | type | notes from sample data |
+| Column | Type | Source | Notes |
+|---|---|---|---|
+| col_name | type | source file:line or "Fivetran" or "Canvas EMR" | notes from sample data |
 ...
 
 <Repeat for each non-empty table>
