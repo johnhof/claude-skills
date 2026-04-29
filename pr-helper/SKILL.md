@@ -37,6 +37,7 @@ Before doing anything else, check for an existing run directory at:
 
 If it exists:
 - Read `README.md` for prior PR context
+- Read `sticky_comment_id` for the ID of the existing top-level comment
 - Count existing `CYCLE_#.md` files to determine the next cycle number
 - Resume from where the last cycle left off — skip re-writing `README.md`, proceed directly to Step 1 to re-fetch the latest PR state, and open the next `CYCLE_#.md`
 - Print: `[pr-helper] resuming existing run — cycle N starting`
@@ -52,9 +53,9 @@ Full layout:
 ```
 ~/.claude/runs/pr-helper/<repo>-pr-<number>/
   README.md            ← PR summary written at start of Step 1
+  sticky_comment_id    ← GitHub comment ID of the single top-level sticky comment
   comments.json        ← raw fetched comments (top-level + inline)
   plan.md              ← resolution plan from Step 3
-  responses.md         ← log of all comments posted / reactions added
   ci.md                ← CI failure details and fix attempts
   CYCLE_1.md           ← full terminal output for processing cycle 1
   CYCLE_2.md           ← full terminal output for processing cycle 2 (if new events triggered a re-run)
@@ -63,12 +64,31 @@ Full layout:
 
 **Logging rules:**
 - Every line printed to the terminal during a cycle MUST also be appended to the current `CYCLE_#.md`
-- Cycle 1 begins at Step 1. Each time the poll loop (Step 8) detects new actionable events and re-enters Step 2, increment the cycle counter and start writing to a new `CYCLE_#.md`
+- Cycle 1 begins at Step 1. Each time the poll loop (Step 9) detects new actionable events and re-enters Step 2, increment the cycle counter and start writing to a new `CYCLE_#.md`
 - Timestamps should be prepended to each logged line in `CYCLE_#.md`: `[HH:MM:SS] <line>`
 
 ---
 
-## Step 1 — Fetch PR Details
+## Step 1 — Sync Branch
+
+**At the start of every cycle (including cycle 1)**, before fetching PR details, pull the latest base branch and rebase the head branch onto it:
+
+```bash
+git fetch origin
+git rebase origin/<base-branch>
+```
+
+If conflicts arise during the rebase, resolve them immediately (same process as Step 7 merge conflicts: resolve markers, `git add`, `git rebase --continue`). Push the rebased branch:
+
+```bash
+git push --force-with-lease origin <head-branch>
+```
+
+Do not proceed to the next step until the branch is cleanly rebased with no conflicts.
+
+---
+
+## Step 2 — Fetch PR Details
 
 Using `gh pr view <url-or-number> --json number,title,body,baseRefName,headRefName,url,state,reviews,reviewRequests,statusCheckRollup,comments` and `gh api /repos/{owner}/{repo}/pulls/{number}/comments` (inline comments), compile:
 
@@ -98,6 +118,27 @@ Using `gh pr view <url-or-number> --json number,title,body,baseRefName,headRefNa
 <output of: git diff <base>...<head> --stat>
 ```
 
+**Create or verify the sticky comment.** There must be exactly one top-level PR Helper comment for the lifetime of this PR. On the very first run (no `sticky_comment_id` file), post the skeleton frame and save the comment ID:
+
+```bash
+STICKY_ID=$(gh api /repos/{owner}/{repo}/issues/{number}/comments \
+  -f body="## PR Helper
+
+_Run in progress — updating as fixes are applied…_
+
+| # | Reviewer | Comment | Resolution |
+|---|----------|---------|------------|
+
+### Commits
+_none yet_
+
+---
+🤖 PR Helper" --jq '.id')
+echo "$STICKY_ID" > ~/.claude/runs/pr-helper/<repo>-pr-<number>/sticky_comment_id
+```
+
+On resuming runs, read the saved ID — do **not** create a new comment.
+
 **Open `CYCLE_1.md`** — all terminal output from this point forward is appended to it with `[HH:MM:SS]` timestamps until the cycle ends.
 
 Print a formatted summary to the user:
@@ -126,10 +167,19 @@ Do not wait for user interaction after printing this.
 
 ## Step 2 — Evaluate Comments
 
-For each comment (top-level and inline), evaluate:
+**First, filter out all non-review comments.** Only human code review comments are in scope. Silently discard — do not log, table, or react to — any comment that is:
+
+- Posted by a bot account (author login ends in `[bot]`, or is a known bot: `github-actions`, `cloudflare-workers-and-pages`, `linear`, `greptile-apps`, `dependabot`, etc.)
+- A slash command trigger (e.g. `@claude /review`, `/approve`, `/deploy`)
+- A CI/deploy status notification or linkback (Cloudflare Pages preview URLs, Linear issue links, GitHub Actions summaries)
+- An automated status update with no code feedback
+
+Only evaluate comments that are **human-authored code review feedback** — questions, suggestions, bug reports, or change requests about the code in the diff.
+
+For each qualifying comment, evaluate:
 
 - **Valid & actionable** — the comment identifies a real issue that can be fixed with a code change
-- **Valid but not actionable** — the comment is a question, acknowledgement, or discussion that doesn't require a code change
+- **Valid but not actionable** — the comment is a question or discussion that doesn't require a code change
 - **Invalid / incorrect** — the agent believes the comment is factually wrong, based on a misunderstanding of the code, or already addressed
 
 Evaluation criteria:
@@ -145,7 +195,7 @@ Group and plan fixes:
 
 - **Independent comments** — plan each as a separate commit
 - **Related comments** — plan as a single combined commit (note which comments are covered)
-- **Invalid/not-actionable comments** — plan a response explaining the agent's reasoning
+- **Invalid/not-actionable comments** — record the reasoning; it will appear in the sticky comment
 
 For each plan, note:
 - Which comment(s) it addresses
@@ -167,46 +217,26 @@ Print the full plan to the user **without waiting for interaction**:
   Plan: <description of change>
   Files: <file(s)>
 
-[INVALID — will respond]
+[INVALID — recorded in sticky comment]
   Comment: @dave line 88
   Reason: The method is called in <file>:<line> — this is not dead code.
 
-[NOT ACTIONABLE — will respond]
+[NOT ACTIONABLE — recorded in sticky comment]
   Comment: @eve top-level
   Reason: This is an acknowledgement, no code change needed.
 ```
 
 ---
 
-## Step 4 — Post Initial Responses
+## Step 4 — React to Valid Comments
 
-**Without waiting for user input**, post responses to all invalid and not-actionable comments immediately, before making any code changes.
-
-For each **invalid or not-actionable** comment, post a reply **directly on the comment thread** via:
-```bash
-gh api /repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-  -f body="<explanation>
-
----
-🤖 PR Helper"
-```
-
-For top-level comments use:
-```bash
-gh api /repos/{owner}/{repo}/issues/{number}/comments \
-  -f body="<explanation>
-
----
-🤖 PR Helper"
-```
-
-For each **valid** comment, add a 👍 emoji reaction via the GitHub reactions API:
+For each **valid** comment, add a 👍 emoji reaction to acknowledge it will be addressed:
 ```bash
 gh api /repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions \
   -X POST -f content="+1"
 ```
 
-> These 👍-reacted comments will each receive a detailed individual reply in Step 5 after their fix is committed.
+**Do not post any comments — no replies, no thread responses, nothing.** All outcomes (fixed, invalid, not-actionable) are recorded only in the sticky comment updated in Step 8.
 
 ---
 
@@ -228,27 +258,10 @@ Work on the checked-out head branch of the PR. For each fix plan:
    ```bash
    git rev-parse HEAD
    ```
-6. Post a reply **directly on each comment's thread** addressed by this commit. Use the same `gh api` endpoints as Step 4. This is **required** — the summary comment in Step 8 alone is not sufficient; every fixed comment must receive an individual reply.
 
-   The reply must include all four elements:
-   - A link to the commit in the PR's commit view: `https://github.com/{owner}/{repo}/pull/{N}/commits/{sha}`
-   - A "view diff" link using the same URL (so the reviewer can see exactly what changed)
-   - **What changed** — a concrete description of the code change
-   - **Why it works** — an explanation of why the change resolves the reviewer's concern
+**Do not post any comments or replies after committing.** The sticky comment (Step 8) is the only place commit links and resolutions are recorded. Do not resolve or dismiss any comments — leave that to humans.
 
-   Format:
-   ```
-   Addressed in [`<short-sha>`](https://github.com/{owner}/{repo}/pull/{N}/commits/{sha}) ([view diff](https://github.com/{owner}/{repo}/pull/{N}/commits/{sha})).
-
-   **What changed:** <concrete description of the code change made>
-
-   **Why it works:** <explanation of why this resolves the reviewer's concern. If the reviewer's suggestion was followed exactly, say so. If a different approach was taken, explain why.>
-
-   ---
-   🤖 PR Helper
-   ```
-
-**Do not resolve or dismiss any comments.** Leave resolution to humans.
+After all commits for this cycle are pushed, proceed to Step 6 (CI) then Step 7 (blockers), then run Step 8 to update the sticky comment and Step 8b to refresh the PR description.
 
 ---
 
@@ -269,7 +282,7 @@ For each failing job:
    ```
    fix: resolve CI failure in <job-name>
    ```
-4. If not locally reproducible, push the best-effort fix and note it in a top-level PR comment
+4. If not locally reproducible, push the best-effort fix and note it in the sticky comment (Step 8) — do **not** post a new top-level comment.
 
 ---
 
@@ -277,55 +290,29 @@ For each failing job:
 
 ### Merge Conflicts (REQUIRED — must be resolved before proceeding)
 
-If the PR has merge conflicts, resolving them is **mandatory**. The PR cannot proceed until all conflicts are gone. Do not skip or defer this step.
-
-1. Fetch the latest base branch:
-   ```bash
-   git fetch origin
-   ```
-2. Rebase onto the base branch:
-   ```bash
-   git rebase origin/<base-branch>
-   ```
-3. For each file with conflicts, open it and resolve every conflict marker (`<<<<<<<`, `=======`, `>>>>>>>`). Do not leave any markers in the file.
-4. Stage each resolved file:
-   ```bash
-   git add <resolved-file>
-   ```
-5. Continue the rebase:
-   ```bash
-   git rebase --continue
-   ```
-   Repeat steps 3–5 until the rebase completes with no remaining conflicts.
-6. Push the rebased branch (force-push required after rebase):
-   ```bash
-   git push --force-with-lease origin <head-branch>
-   ```
-7. Verify the PR no longer shows conflicts:
-   ```bash
-   gh pr view <number> --json mergeable
-   ```
-   If `mergeable` is not `MERGEABLE`, repeat from step 1.
+The start-of-cycle rebase in Step 1 handles conflicts proactively. If conflicts surface mid-cycle (e.g. a commit lands on base while fixes are being applied), resolve them using the same process as Step 1: fetch, rebase, resolve markers, `git add`, `git rebase --continue`, force-push. Do not proceed until `gh pr view <number> --json mergeable` returns `MERGEABLE`.
 
 ### Other Blockers
 
-- **Required reviews not yet approved** — post a top-level comment tagging the required reviewers that the PR is ready for re-review (do not attempt to bypass)
-- **Branch protection / status checks still pending** — note them but do not attempt to bypass
+- **Required reviews not yet approved** — note the required reviewers in the sticky comment (Step 8); do not post a new top-level comment
+- **Branch protection / status checks still pending** — note them in the sticky comment but do not attempt to bypass
 
 ---
 
-## Step 8 — Post Summary Comment
+## Step 8 — Update Sticky Comment
 
-After all fixes are committed, CI is green, and blockers are resolved, post a **single top-level summary comment** on the PR via:
+After all fixes are committed, CI is checked, and blockers are handled, **edit the existing sticky comment in-place** using its saved ID. Never post a new top-level comment — always PATCH the existing one:
+
 ```bash
-gh api /repos/{owner}/{repo}/issues/{number}/comments \
-  -f body="<body>"
+STICKY_ID=$(cat ~/.claude/runs/pr-helper/<repo>-pr-<number>/sticky_comment_id)
+gh api --method PATCH /repos/{owner}/{repo}/issues/comments/${STICKY_ID} \
+  -f body="<updated body>"
 ```
 
-The comment body must follow this format:
+The updated body must follow this format:
 
 ```
-## PR Helper Run Summary
+## PR Helper
 
 **N comments addressed · N commits pushed · CI <✅ passing | ❌ N failing>**
 
@@ -333,7 +320,7 @@ The comment body must follow this format:
 
 | # | Reviewer | Comment | Resolution |
 |---|----------|---------|------------|
-| 1 | @alice | <one-phrase summary of their comment> | Fixed in [abc1234](<url>) — <one sentence what changed> |
+| 1 | @alice | <one-phrase summary of their comment> | Fixed in [`abc1234`](<commit-url>) — <one sentence what changed> |
 | 2 | @bob | <one-phrase summary> | Not actionable — <one sentence explanation> |
 | 3 | @charlie | <one-phrase summary> | Invalid — <one sentence explanation> |
 
@@ -341,14 +328,60 @@ The comment body must follow this format:
 - [`abc1234`](<url>) fix: <message>
 - [`def5678`](<url>) fix: <message>
 
+### Notes
+<any CI non-reproducible failures, required review blockers, or pending status checks — omit section if empty>
+
 ---
 🤖 PR Helper
 ```
 
 Rules:
-- Every comment that was evaluated must appear in the table — fixed, invalid, and not-actionable alike
-- The "Resolution" column must be a self-contained sentence: a reviewer skimming only this table should understand what happened without reading the thread
+- Every comment evaluated must appear in the table — fixed, invalid, and not-actionable alike
+- The "Resolution" column must be a self-contained sentence
 - Fixed comments must include the commit link; invalid/not-actionable must include the one-line reason
+- Accumulate rows across cycles — do not reset the table on each cycle, append new rows
+
+---
+
+## Step 8b — Sync Branch (End of Cycle)
+
+After updating the sticky comment, rebase the head branch onto the latest base branch again to incorporate any new commits that landed during this cycle:
+
+```bash
+git fetch origin
+git rebase origin/<base-branch>
+```
+
+Resolve any conflicts as in Step 1. Push:
+
+```bash
+git push --force-with-lease origin <head-branch>
+```
+
+---
+
+## Step 8c — Refresh PR Description
+
+After every cycle (after Step 8b), read the current PR description and compare it to the actual state of the code on the head branch.
+
+```bash
+gh pr view <number> --json body --jq '.body'
+```
+
+Check whether the description accurately reflects:
+- What the PR now does (after any fixes applied this cycle)
+- The current approach taken (especially if a fix changed the implementation strategy)
+- Any sections that reference code, behavior, or files that no longer exist as described
+
+If the description is stale or incomplete, update it:
+```bash
+gh pr edit <number> --body "$(cat <<'EOF'
+<updated description>
+EOF
+)"
+```
+
+Preserve any structured sections the author included (e.g. "## Summary", "## Test plan"). Only update content that is factually wrong or missing relative to the current code — do not rewrite for style.
 
 ---
 
@@ -367,7 +400,7 @@ Print on each poll:
 ```
 
 Check on each poll:
-- **New comments** since last check → increment cycle counter, open new `CYCLE_#.md`, loop back to Step 2 for new comments only, then re-run Step 8 to update the summary comment
+- **New comments** since last check → increment cycle counter, open new `CYCLE_#.md`, loop back to Step 1 (sync branch) then Step 3 for new comments only, then run Steps 8, 8b, and 8c to update the sticky comment, re-sync, and refresh the PR description
 - **New CI failures** → increment cycle counter, open new `CYCLE_#.md`, loop back to Step 6
 - **PR merged** → print the completion message and exit:
 
@@ -386,9 +419,10 @@ The PR was closed without merging. Exiting.
 
 ## Notes
 
-- **Never pause for user input** after Step 0 — the workflow runs fully autonomously from Step 1 through Step 8
+- **Never pause for user input** after Step 0 — the workflow runs fully autonomously from Step 1 through Step 8b
+- **The sticky comment is the only comment pr-helper ever posts or edits** — one comment, created in Step 1, updated in Step 8. No replies, no thread responses, no additional top-level comments under any circumstance
 - Never resolve/dismiss comments — leave that to humans
-- Every automated comment and response MUST end with `\n\n---\n🤖 PR Helper`
+- Every automated reply MUST end with `\n\n---\n🤖 PR Helper`
 - Always work on the PR's head branch; never commit directly to base
 - If the head branch is not checked out locally, run `gh pr checkout <number>` first
 - When in doubt about whether a comment is valid, treat it as valid and fix it
