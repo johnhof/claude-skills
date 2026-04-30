@@ -53,7 +53,6 @@ Full layout:
 ```
 ~/.claude/runs/pr-helper/<repo>-pr-<number>/
   README.md            ← PR summary written at start of Step 1
-  sticky_comment_id    ← GitHub comment ID of the single top-level sticky comment
   comments.json        ← raw fetched comments (top-level + inline)
   plan.md              ← resolution plan from Step 3
   ci.md                ← CI failure details and fix attempts
@@ -118,26 +117,33 @@ Using `gh pr view <url-or-number> --json number,title,body,baseRefName,headRefNa
 <output of: git diff <base>...<head> --stat>
 ```
 
-**Create or verify the sticky comment.** There must be exactly one top-level PR Helper comment for the lifetime of this PR. On the very first run (no `sticky_comment_id` file), post the skeleton frame and save the comment ID:
+**Initialize the PR tracker section.** The tracker lives at the bottom of the PR description (never in a comment). On every run start, read the current PR body, then:
 
-```bash
-STICKY_ID=$(gh api /repos/{owner}/{repo}/issues/{number}/comments \
-  -f body="## PR Helper
+- If the body already contains `<!-- pr-helper-tracker -->`: update the `__Last Run__` timestamp and set `**Status:** ⏳ In Progress`. Do not touch the existing Progress table rows.
+- If the marker is absent: append the tracker block to the end of the body.
 
-_Run in progress — updating as fixes are applied…_
+The tracker block format:
 
-| # | Reviewer | Comment | Resolution |
-|---|----------|---------|------------|
-
-### Commits
-_none yet_
-
+```
 ---
-🤖 PR Helper" --jq '.id')
-echo "$STICKY_ID" > ~/.claude/runs/pr-helper/<repo>-pr-<number>/sticky_comment_id
+
+<!-- pr-helper-tracker -->
+> **PR Helper** — automated progress tracker
+
+__Last Run: YYYY-MM-DD HH:MM UTC__
+
+**Status:** ⏳ In Progress
+
+| Timestamp | Source | Resolution |
+|-----------|--------|------------|
 ```
 
-On resuming runs, read the saved ID — do **not** create a new comment.
+Apply the update:
+```bash
+CURRENT_BODY=$(gh pr view <number> --json body --jq '.body')
+# (build NEW_BODY by appending or updating the tracker section)
+gh pr edit <number> --body "$NEW_BODY"
+```
 
 **Open `CYCLE_1.md`** — all terminal output from this point forward is appended to it with `[HH:MM:SS]` timestamps until the cycle ends.
 
@@ -299,47 +305,38 @@ The start-of-cycle rebase in Step 1 handles conflicts proactively. If conflicts 
 
 ---
 
-## Step 8 — Update Sticky Comment
+## Step 8 — Update PR Description Tracker
 
-After all fixes are committed, CI is checked, and blockers are handled, **edit the existing sticky comment in-place** using its saved ID. Never post a new top-level comment — always PATCH the existing one:
+After all fixes are committed, CI is checked, and blockers are handled, **edit the PR description in-place** to append new rows to the Progress table and update the status. Never post a new comment.
+
+Read the current description, locate the `<!-- pr-helper-tracker -->` section, and patch it:
 
 ```bash
-STICKY_ID=$(cat ~/.claude/runs/pr-helper/<repo>-pr-<number>/sticky_comment_id)
-gh api --method PATCH /repos/{owner}/{repo}/issues/comments/${STICKY_ID} \
-  -f body="<updated body>"
+CURRENT_BODY=$(gh pr view <number> --json body --jq '.body')
+# (build UPDATED_BODY: append new rows to the Progress table, leave all other content untouched)
+gh pr edit <number> --body "$UPDATED_BODY"
 ```
 
-The updated body must follow this format:
+For each action taken this cycle, append one row to the Progress table:
 
-```
-## PR Helper
+| Timestamp | Source | Resolution |
+|-----------|--------|------------|
+| `HH:MM UTC` | `@alice` — "one-phrase summary of their comment" | Fixed in [`abc1234`](<url>) — <one sentence what changed> |
+| `HH:MM UTC` | `@bob` — "one-phrase summary" | Not actionable — <one sentence explanation> |
+| `HH:MM UTC` | `CI: <job-name>` | Fixed in [`def5678`](<url>) — <one sentence what changed> |
+| `HH:MM UTC` | `Merge conflict: <filename>` | Resolved — <one sentence: which version preferred or how resolved> |
+| `HH:MM UTC` | `Required review: @reviewer` | Pending — reviewer approval still needed |
 
-**N comments addressed · N commits pushed · CI <✅ passing | ❌ N failing>**
-
-### Comments
-
-| # | Reviewer | Comment | Resolution |
-|---|----------|---------|------------|
-| 1 | @alice | <one-phrase summary of their comment> | Fixed in [`abc1234`](<commit-url>) — <one sentence what changed> |
-| 2 | @bob | <one-phrase summary> | Not actionable — <one sentence explanation> |
-| 3 | @charlie | <one-phrase summary> | Invalid — <one sentence explanation> |
-
-### Commits
-- [`abc1234`](<url>) fix: <message>
-- [`def5678`](<url>) fix: <message>
-
-### Notes
-<any CI non-reproducible failures, required review blockers, or pending status checks — omit section if empty>
-
----
-🤖 PR Helper
-```
+**Source** is always the entity that triggered the action:
+- Review comment → `@author — "brief quote"`
+- CI failure → `CI: <job-name>`
+- Merge conflict → `Merge conflict: <file>`
+- Branch protection / required review → `Required review: @reviewer`
 
 Rules:
-- Every comment evaluated must appear in the table — fixed, invalid, and not-actionable alike
-- The "Resolution" column must be a self-contained sentence
-- Fixed comments must include the commit link; invalid/not-actionable must include the one-line reason
-- Accumulate rows across cycles — do not reset the table on each cycle, append new rows
+- Every action taken (code fix, CI fix, conflict resolution, invalid comment disposition) gets a row
+- Accumulate rows across cycles — never reset, only append
+- After all rows are appended, set **Status** to `✅ Done` if all actionable items are resolved, or leave as `⏳ In Progress` if the cycle ends with items still pending (e.g. required reviews)
 
 ---
 
@@ -360,20 +357,15 @@ git push --force-with-lease origin <head-branch>
 
 ---
 
-## Step 8c — Refresh PR Description
+## Step 8c — Refresh PR Description Content
 
-After every cycle (after Step 8b), read the current PR description and compare it to the actual state of the code on the head branch.
+After every cycle (after Step 8b), check whether the author-written PR description content is still accurate relative to the current state of the code.
 
-```bash
-gh pr view <number> --json body --jq '.body'
-```
+Compare the description against the current head branch for:
+- Sections that reference code, behavior, or files that no longer exist as described
+- Missing coverage of significant changes introduced by fixes this cycle
 
-Check whether the description accurately reflects:
-- What the PR now does (after any fixes applied this cycle)
-- The current approach taken (especially if a fix changed the implementation strategy)
-- Any sections that reference code, behavior, or files that no longer exist as described
-
-If the description is stale or incomplete, update it:
+If the description is stale or incomplete, update only the author-written sections:
 ```bash
 gh pr edit <number> --body "$(cat <<'EOF'
 <updated description>
@@ -381,7 +373,7 @@ EOF
 )"
 ```
 
-Preserve any structured sections the author included (e.g. "## Summary", "## Test plan"). Only update content that is factually wrong or missing relative to the current code — do not rewrite for style.
+**Critical**: Always preserve the `<!-- pr-helper-tracker -->` section exactly as-is when rewriting the description body. Never modify or remove the tracker block. Only update content above the `---` separator that precedes it.
 
 ---
 
@@ -400,7 +392,7 @@ Print on each poll:
 ```
 
 Check on each poll:
-- **New comments** since last check → increment cycle counter, open new `CYCLE_#.md`, loop back to Step 1 (sync branch) then Step 3 for new comments only, then run Steps 8, 8b, and 8c to update the sticky comment, re-sync, and refresh the PR description
+- **New comments** since last check → increment cycle counter, open new `CYCLE_#.md`, loop back to Step 1 (sync branch) then Step 3 for new comments only, then run Steps 8, 8b, and 8c to update the tracker, re-sync, and refresh the PR description
 - **New CI failures** → increment cycle counter, open new `CYCLE_#.md`, loop back to Step 6
 - **PR merged** → print the completion message and exit:
 
@@ -420,9 +412,8 @@ The PR was closed without merging. Exiting.
 ## Notes
 
 - **Never pause for user input** after Step 0 — the workflow runs fully autonomously from Step 1 through Step 8b
-- **The sticky comment is the only comment pr-helper ever posts or edits** — one comment, created in Step 1, updated in Step 8. No replies, no thread responses, no additional top-level comments under any circumstance
+- **Never post any PR comments** — pr-helper never creates or edits PR comments. All progress tracking lives in the PR description tracker section only
 - Never resolve/dismiss comments — leave that to humans
-- Every automated reply MUST end with `\n\n---\n🤖 PR Helper`
 - Always work on the PR's head branch; never commit directly to base
 - If the head branch is not checked out locally, run `gh pr checkout <number>` first
 - When in doubt about whether a comment is valid, treat it as valid and fix it

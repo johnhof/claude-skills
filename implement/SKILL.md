@@ -74,7 +74,11 @@ The example below shows the max (AGENT_COUNT=5) case; for simple tasks with 3 ag
 
 [workflow] ┌ Step 4/4 — Finalize
 [git]      ├ START  creating branch feature/{{prompt-slug}}
-[git]      ├ DONE   committed — "feat: {{summary}}"
+[git]      ├ DONE   branch ready — "feat: {{summary}}"
+[arbiter]  ├ START  generating review link
+[arbiter]  ├ DONE   <arbiter-url>
+[workflow] ├ PAUSED waiting for user approval to push
+           ┆        (user reviews diff + arbiter link, then replies)
 [git]      ├ START  pushing to remote
 [git]      ├ DONE   pushed
 [gh]       ├ START  opening draft PR
@@ -245,6 +249,10 @@ Each agent must, after completing the red/green/refactor cycle:
 2. **Run all detected CI steps** in the draft — build first, then lint, then tests
 3. **Enforce 80% coverage** — run coverage and confirm new code reaches at least 80% line/branch coverage; if coverage falls below 80%, write additional tests until it passes
 4. **Record CI results** — note which steps passed/failed and the final coverage percentage; this becomes part of the agent's output used during selection
+5. **Kill orphaned test workers** — after CI completes (pass or fail), kill any node/test-runner processes that remain open in the worktree to prevent them from running as background zombies:
+   ```bash
+   lsof -t +D <worktree-path> 2>/dev/null | xargs kill 2>/dev/null; true
+   ```
 
 For each agent:
 - Print `[agent-N] ├ START  → <absolute-draft-path>` immediately when the agent is launched
@@ -282,6 +290,16 @@ Launch a **selection agent** that:
   1. Getting the HEAD SHA from the winning draft: `git -C <winning-draft-path> rev-parse HEAD`
   2. Creating a branch in the original repo at that SHA: `git -C <repo-root> branch solution/{{prompt-slug}} <sha>`
   3. Adding a worktree at the solution path: `git -C <repo-root> worktree add ~/.claude/runs/implement/{{prompt-slug}}/solution/{{project}} solution/{{prompt-slug}}`
+  4. Creating a symlink inside the repo root under `.worktrees/` so the solution is easy to find and open in an IDE:
+     ```bash
+     SYMLINK_DIR="<repo-root>/.worktrees"
+     mkdir -p "$SYMLINK_DIR"
+     ln -sfn "$(realpath ~/.claude/runs/implement/{{prompt-slug}}/solution/{{project}})" "$SYMLINK_DIR/{{prompt-slug}}"
+     ```
+     The symlink lands at `<repo-root>/.worktrees/{{prompt-slug}}` pointing to the solution worktree. If `.worktrees` is not already in the repo's `.gitignore`, append it:
+     ```bash
+     grep -qxF '.worktrees' <repo-root>/.gitignore 2>/dev/null || echo '.worktrees' >> <repo-root>/.gitignore
+     ```
 - **Never deletes any drafts** — all {AGENT_COUNT} drafts are preserved in `drafts/agent-N/` for later analysis
 
 When the selection agent completes, print:
@@ -323,6 +341,7 @@ Launch a **reviewer agent** that:
 - Every finding must cite the specific file and line number from the diff — findings without a direct diff reference are invalid and must be omitted
 - Unmet requirements from `resources/` (e.g. a missing AC from the Linear ticket, a Figma element not implemented) are automatic **Blockers**
 - **Runs all CI steps** (build, lint, tests, coverage) against the solution and includes the results in the report header; any CI failure is an automatic Blocker; coverage on new code below 80% is an automatic Major
+- **After CI completes**, kill any orphaned test worker processes left open in the solution worktree: `lsof -t +D <solution-worktree-path> 2>/dev/null | xargs kill 2>/dev/null; true`
 - Writes the full structured report (CI results → Blockers → Majors → Minors → Nits) to the absolute path of `~/.claude/runs/implement/{{prompt-slug}}/reviews/iteration-N/review.md`
 - Declares either `APPROVED` or `CHANGES REQUESTED`
 
@@ -346,6 +365,7 @@ Print `[fixer] ├ START  addressing N Blockers, N Majors` when the fix agent la
 - After applying fixes, the fix agent must re-run all CI steps (build, lint, tests, coverage) in the solution draft
 - If any CI step fails after fixes, the fix agent must resolve the failure before completing
 - Coverage must remain at or above 80% on new code — if fixes reduced coverage, write additional tests
+- **After CI completes**, kill any orphaned test worker processes left open in the solution worktree: `lsof -t +D <solution-worktree-path> 2>/dev/null | xargs kill 2>/dev/null; true`
 - Write a summary of every fix applied (including any CI remediation) to the absolute path of `~/.claude/runs/implement/{{prompt-slug}}/reviews/iteration-N/changes.md`
 
 When the fix agent completes, print:
@@ -365,7 +385,11 @@ Increment the iteration counter and return to Pre-Review Main Sync.
 
 Print `[workflow] ┌ Step 4/4 — Finalize` before starting.
 
-The solution is already a git worktree on branch `solution/{{prompt-slug}}` with all commits in place. Finalization is a rename and push:
+The solution is already a git worktree on branch `solution/{{prompt-slug}}` with all commits in place.
+
+**This step is split into two halves with a mandatory user-approval gate between them.**
+
+### Phase A — Prepare for review (runs immediately, no user input needed)
 
 1. Rename the solution branch to the final branch name:
    - `feature/{{prompt-slug}}` for new features
@@ -380,7 +404,29 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
    [git]      ├ DONE   branch ready — "<conventional-commit-message>"
    ```
 
-2. Push the branch to remote:
+2. Run `/arbiter` to generate a review link for the local branch (before pushing):
+
+   Print:
+   ```
+   [arbiter]  ├ START  generating review link
+   [arbiter]  ├ DONE   <arbiter-url>
+   ```
+
+3. Print the **Phase A run summary** using the summary format defined in step 8 below — omit the `PR` line (no PR yet) and include the arbiter link prominently as the call-to-action.
+
+4. **PAUSE — explicitly wait for user confirmation before proceeding.**
+
+   Print:
+   ```
+   [workflow] ├ PAUSED waiting for user approval to push
+              ┆        Review the diff above and the arbiter link, then reply to continue.
+   ```
+
+   Do **not** push, create a PR, or invoke pr-helper until the user replies. Wait for the user's next message before entering Phase B.
+
+### Phase B — Publish (runs only after user confirms)
+
+5. Push the branch to remote:
    ```bash
    git -C <solution-worktree-path> push -u origin <final-branch-name>
    ```
@@ -391,9 +437,9 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
    [git]      ├ DONE   pushed → <branch-name>
    ```
 
-5. Open a **draft PR** using `gh pr create --draft` with:
+6. Open a **draft PR** using `gh pr create --draft` with:
    - Title derived from the Conventional Commits message
-   - Body summarizing the change, linking to the originating ticket if one was provided, and listing the review iterations completed
+   - Body following the **Pull Request Body Format** rules in `CLAUDE.md`
 
    Print:
    ```
@@ -401,7 +447,7 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
    [gh]       ├ DONE   <full-pr-url>
    ```
 
-6. Invoke `/pr-helper` on the newly opened PR to catch initial CI failures and address any early review comments:
+7. Invoke `/pr-helper` on the newly opened PR to catch initial CI failures and address any early review comments:
    ```
    /pr-helper <full-pr-url>
    ```
@@ -412,9 +458,7 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
    [pr-helper] ├ START  monitoring <full-pr-url>
    ```
 
-7. Run `/arbiter` to generate a review link and present it to the user
-
-8. Print a **human-readable run summary** directly to the terminal. This is the final output the user sees — make it scannable and include absolute path links for every artifact so the user can drill in without hunting.
+8. Print a **final human-readable run summary** directly to the terminal. This is the same format as the Phase A summary but now includes the PR URL. Make it scannable and include absolute path links for every artifact.
 
    **Rendering rule: never emit raw markdown syntax.** All formatting must use ANSI escape codes so the output looks rendered, not like a markdown source file:
    - Section headers: bold + underline — `\033[1m\033[4mHeading\033[0m`
@@ -422,7 +466,7 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
    - Bullet points: `•` character (not `-`)
    - No `##`, `**`, `__`, backtick fences, or other markdown punctuation in output
 
-   Format (shown here in pseudo-notation; emit actual ANSI codes, not the escape sequences literally):
+   **Summary format** (used in both Phase A and Phase B; shown in pseudo-notation — emit actual ANSI codes):
    ```
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    [BOLD]Implementation Summary — {{prompt-slug}}[/BOLD]
@@ -458,7 +502,12 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
 
    <3–6 sentences describing the complete implementation>
 
-   [BOLD]PR[/BOLD]  →  <full-pr-url>
+   [BOLD+UNDERLINE]Diff[/BOLD+UNDERLINE]
+
+   <output of: git -C <solution-worktree-path> diff HEAD~<N>..HEAD --stat>
+
+   [BOLD]Arbiter[/BOLD]  →  <arbiter-url>
+   [BOLD]PR[/BOLD]      →  <full-pr-url>  (Phase A: omit this line — PR not yet created)
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    ```
 
@@ -468,6 +517,9 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
    - Selection rationale is concrete — name the specific properties that decided the winner, not generic praise
    - Review findings are one sentence each — the finding name and the fix applied; omit Minors and Nits unless they were the only findings
    - Complete solution description is written for someone who has not read any of the artifacts
+   - The Diff section shows the file-level change summary so the user can quickly assess scope before approving the push
+   - **Phase A**: omit the `PR` line entirely (no PR exists yet); the Arbiter link is the primary call-to-action
+   - **Phase B**: include the `PR` line with the full URL
 
    Print:
    ```
