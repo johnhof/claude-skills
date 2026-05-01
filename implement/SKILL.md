@@ -300,6 +300,17 @@ Launch a **selection agent** that:
      ```bash
      grep -qxF '.worktrees' <repo-root>/.gitignore 2>/dev/null || echo '.worktrees' >> <repo-root>/.gitignore
      ```
+- **Copy gitignored config files into the solution worktree** — after creating the worktree, find all gitignored env/config files in the source repo root (e.g. `.env`, `.env.local`, `apps/**/.env`, `apps/**/.env.local`) and copy them into the equivalent paths in the solution worktree. These files are excluded from git but required for the app to run locally:
+  ```bash
+  # Find gitignored env files in the source repo and copy to the solution worktree
+  git -C <repo-root> ls-files --others --ignored --exclude-standard | grep -E '(^|/)\.env(\.|$)' | while read f; do
+    src="<repo-root>/$f"
+    dst="<solution-worktree>/$f"
+    [ -f "$src" ] && mkdir -p "$(dirname "$dst")" && cp "$src" "$dst"
+  done
+  ```
+  Print one line per file copied: `[config]   ├ copied  <relative-path>`
+  If no env files are found, print: `[config]   ├ SKIP    no gitignored env files found in source repo`
 - **Never deletes any drafts** — all {AGENT_COUNT} drafts are preserved in `drafts/agent-N/` for later analysis
 
 When the selection agent completes, print:

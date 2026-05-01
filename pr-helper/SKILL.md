@@ -234,15 +234,27 @@ Print the full plan to the user **without waiting for interaction**:
 
 ---
 
-## Step 4 — React to Valid Comments
+## Step 4 — React to Comments
 
-For each **valid** comment, add a 👍 emoji reaction to acknowledge it will be addressed:
+React to every evaluated comment immediately based on its classification. Use the inline comment endpoint for file/line comments and the issue comment endpoint for top-level comments:
+
 ```bash
+# Inline (file/line) comment:
 gh api /repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions \
-  -X POST -f content="+1"
+  -X POST -f content="<reaction>"
+
+# Top-level conversation comment:
+gh api /repos/{owner}/{repo}/issues/comments/{comment_id}/reactions \
+  -X POST -f content="<reaction>"
 ```
 
-**Do not post any comments — no replies, no thread responses, nothing.** All outcomes (fixed, invalid, not-actionable) are recorded only in the sticky comment updated in Step 8.
+| Classification | Reaction | content value |
+|----------------|----------|---------------|
+| Valid & actionable — will fix | 👍 | `+1` |
+| Needs clarification before acting | ❓ | `confused` |
+| Invalid or not actionable | 👎 | `-1` |
+
+**Do not post any comments — no replies, no thread responses, nothing.** Reactions are the only signal pr-helper sends per-comment. All outcomes are also recorded in the PR description tracker updated in Step 8.
 
 ---
 
@@ -264,10 +276,20 @@ Work on the checked-out head branch of the PR. For each fix plan:
    ```bash
    git rev-parse HEAD
    ```
+6. **Add ✅ reaction to each comment addressed by this commit** — replace the earlier 👍 with ✅ to signal the fix is live:
+   ```bash
+   gh api /repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions \
+     -X POST -f content="eyes"
+   # Note: GitHub uses "rocket" for 🚀 and there is no direct ✅ alias —
+   # use content="+1" swap: first delete the +1 reaction, then POST white_check_mark:
+   gh api /repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions \
+     -X POST -f content="white_check_mark"
+   ```
+   Do this for every comment covered by this commit before moving to the next fix.
 
-**Do not post any comments or replies after committing.** The sticky comment (Step 8) is the only place commit links and resolutions are recorded. Do not resolve or dismiss any comments — leave that to humans.
+**Do not post any comments or replies after committing.** Reactions are the only per-comment signal. Do not resolve or dismiss any comments — leave that to humans.
 
-After all commits for this cycle are pushed, proceed to Step 6 (CI) then Step 7 (blockers), then run Step 8 to update the sticky comment and Step 8b to refresh the PR description.
+After all commits for this cycle are pushed, proceed to Step 6 (CI) then Step 7 (blockers), then run Step 8 to update the PR description tracker and Step 8b to re-sync the branch.
 
 ---
 
