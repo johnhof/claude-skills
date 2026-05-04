@@ -277,6 +277,23 @@ Launch a **selection agent** that:
 - **Strongly prefers** the implementation with the smallest, most focused diff — an implementation that touches fewer files and introduces no unnecessary abstractions scores higher, all else being equal
 - **Penalizes** any implementation that refactors or reformats code outside the required scope, introduces new helper abstractions not demanded by the task, or over-engineers a simple problem
 - Picks the single best implementation and explains why the others were rejected
+- **Identifies cross-pollination opportunities** — after selecting the winner, reviews each rejected implementation specifically for ideas, techniques, or test cases that the selected implementation is missing or handles worse. For each candidate idea, evaluates: is this strictly better, or just different? Only ideas that are clearly superior (more robust error handling, a test case covering an edge case the winner missed, a simpler approach to a specific sub-problem) qualify. Style differences and neutral tradeoffs are excluded.
+- Writes these opportunities to `~/.claude/runs/implement/{{prompt-slug}}/CROSS_POLLINATION.md`:
+  ```markdown
+  # Cross-Pollination Opportunities
+
+  Ideas from rejected implementations worth incorporating into the solution:
+
+  ## From agent-N
+  - **<short title>**: <what agent-N did, why it's better than what the winner did, exact file/function to apply it to>
+  - ...
+
+  ## From agent-N
+  - ...
+
+  _None_ (if no qualifying ideas were found)
+  ```
+  This file is the authoritative input for the first review iteration. If it contains no qualifying ideas, it must explicitly say so — do not omit the file.
 - Writes `~/.claude/runs/implement/{{prompt-slug}}/SELECTION_REASONING.md` containing:
   - A **summary of each agent's implementation** — what approach it took, which files it changed, and notable design decisions
   - A **divergence analysis** — assessing how much the {AGENT_COUNT} drafts actually differed from each other, covering:
@@ -317,7 +334,9 @@ When the selection agent completes, print:
 ```
 [selector] ├ DONE   selected agent-N — <brief reason>
 [selector] ├        rejected: agent-X (<reason>), agent-X (<reason>), ...
+[selector] ├        cross-pollination → <N ideas from rejected agents | none>
 [selector] ├        reasoning → <absolute-path-to-SELECTION_REASONING.md>
+[selector] ├        pollination → <absolute-path-to-CROSS_POLLINATION.md>
 [selector] ├        solution → <absolute-path-to-solution-dir>
 [workflow] └ DONE   Step 2/4
 ```
@@ -346,6 +365,12 @@ Print `[reviewer] ├ START  scanning diff + codebase context` when the reviewer
 
 Launch a **reviewer agent** that:
 - **Reads all files in `~/.claude/runs/implement/{{prompt-slug}}/resources/` first** — these are the authoritative requirements: Linear ticket ACs, Figma designs, linked specs, etc. Verify the implementation satisfies every requirement found there before evaluating code quality
+- **On iteration 1 only**: reads `~/.claude/runs/implement/{{prompt-slug}}/CROSS_POLLINATION.md` and treats each listed idea as a **suggested improvement** to apply before finalising the review. For each idea:
+  - If the solution already incorporates it: note it as resolved, move on
+  - If it is clearly better than what the solution currently does: raise it as a **Major** finding with the specific change needed, citing the file and line
+  - If it is debatable or stylistic: raise it as a **Minor**
+  - The cross-pollination ideas do not override the primary requirements — if applying one would conflict with a resource requirement, skip it and note why
+  - On iterations 2+, cross-pollination ideas that were already addressed are not re-raised
 - Reviews **only the changed files and lines introduced by this implementation** — not pre-existing code
 - Scans the broader codebase for context only (DRY violations, consistency with existing patterns, integration points), but **never raises findings about pre-existing code not touched by this change**
 - Uses `~/.claude/CODE_REVIEW.md` as its rubric, scoped strictly to what was added, modified, or deleted in this diff
