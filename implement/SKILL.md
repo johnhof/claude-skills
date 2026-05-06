@@ -196,6 +196,87 @@ If no resources are found (no ticket, no links, no file paths), print:
 [resources] └ SKIP  no external resources detected
 ```
 
+## Clarifying Questions
+
+After resource resolution and before complexity assessment, evaluate whether the prompt has any ambiguities that would materially affect the implementation approach.
+
+**Ask questions if any of the following are true:**
+- The expected behavior or success criteria is unclear
+- There are multiple plausible interpretations of what should be built
+- A design decision would significantly change scope (e.g., new table vs. new column, new endpoint vs. extending existing one)
+- A resource (ticket, Figma, etc.) contains conflicting signals
+- The integration points with existing code are unclear
+
+**Do not ask about:**
+- Stylistic preferences (the reviewer will handle those)
+- Details that can be inferred from the codebase
+- Hypothetical edge cases not related to the core task
+
+If questions are needed, ask them all at once in a single message:
+
+```
+[workflow] ┌ Clarifying Questions — answers needed before planning
+           ┆
+           ┆  1. <question>
+           ┆  2. <question>
+           ┆  ...
+           ┆
+           ┆  Reply with answers and I'll continue.
+[workflow] └ PAUSED
+```
+
+Wait for the user's response. Incorporate the answers into `SPEC.md` before proceeding.
+
+If no questions are needed, print:
+```
+[workflow] — no clarifying questions — proceeding to plan
+```
+
+## Bug Reproduction (bug fixes only)
+
+If the task is a **bug fix** (identified from the prompt, ticket, or clarifying question answers), attempt to reproduce the bug with a local test before planning anything.
+
+**Steps:**
+
+1. Explore the codebase to understand the code path involved in the reported bug
+2. Write a minimal failing test — the smallest test that directly exercises the buggy behavior and fails against the current code
+3. Run it:
+   ```bash
+   # use the repo's existing test runner
+   ```
+
+Print the outcome:
+```
+[repro]    ├ START  attempting to reproduce bug
+[repro]    ├ DONE   ✅ reproduced — test fails as expected (<test name>, <error summary>)
+```
+or:
+```
+[repro]    ├ DONE   ❌ could not reproduce — <what was tried and why it didn't fail>
+```
+
+**If reproduction succeeds:** keep the test file in the codebase — the implementation agents will build on it. Record the test path in `SPEC.md` under a `## Reproduction Test` section. Proceed to Complexity Assessment.
+
+**If reproduction fails:** pause and ask the user:
+
+```
+[workflow] ┌ Bug Reproduction Failed — clarification needed
+           ┆
+           ┆  I wrote a test targeting <what was tested> but it passes against the
+           ┆  current code. I was unable to reproduce the reported behavior.
+           ┆
+           ┆  What I tried: <test name / file path>
+           ┆
+           ┆  Could you:
+           ┆    • Describe the exact steps or input that trigger the bug
+           ┆    • Paste the error or unexpected output you're seeing
+           ┆    • Point to a specific file, function, or request where it occurs
+           ┆
+[workflow] └ PAUSED
+```
+
+Wait for the user's response. Update `SPEC.md` with the additional context, then re-attempt reproduction. Repeat until either reproduction succeeds or the user explicitly says to proceed without a repro test.
+
 ## Complexity Assessment
 
 Before Step 1, assess whether the task is simple or complex to determine agent count.
@@ -210,6 +291,36 @@ Set AGENT_COUNT = 3 (simple) or 5 (complex). Print:
 ```
 
 All references to "5 sub-agents" or "5 agents" in subsequent steps use AGENT_COUNT instead.
+
+## Plan Review Gate
+
+Before launching any implementation agents, **always pause and present the plan to the user for approval**.
+
+Print the plan and wait:
+
+```
+[workflow] ┌ Plan Review — waiting for approval before launching agents
+           ┆
+           ┆  Prompt slug:  {{prompt-slug}}
+           ┆  Agent count:  N (simple|complex)
+           ┆  Spec:         <absolute-path-to-SPEC.md>
+           ┆  Resources:    <N resolved | none>
+           ┆
+           ┆  Approach
+           ┆  ─────────────────────────────────────────────────
+           ┆  <3–8 bullet points describing the implementation plan:
+           ┆    - which files will change and why
+           ┆    - key design decisions and the chosen approach
+           ┆    - any migrations, schema changes, or side effects
+           ┆    - risks or edge cases worth calling out>
+           ┆
+           ┆  Reply to continue, or give feedback to adjust the plan.
+[workflow] └ PAUSED
+```
+
+Do not launch any agents until the user replies. If the user provides feedback, incorporate it by updating `SPEC.md`, then re-print the updated plan and pause again. Repeat until the user replies with approval (any message that is not further feedback — e.g. "looks good", "go", "yes", or no objection raised).
+
+Once approved (or skipped), proceed to Step 1.
 
 ## Step 1 — Parallel Implementation (AGENT_COUNT Worktrees)
 
@@ -450,15 +561,27 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
 
 3. Print the **Phase A run summary** using the summary format defined in step 8 below — omit the `PR` line (no PR yet) and include the arbiter link prominently as the call-to-action.
 
-4. **PAUSE — explicitly wait for user confirmation before proceeding.**
+4. **PAUSE — explicitly wait for user review before proceeding.**
 
    Print:
    ```
-   [workflow] ├ PAUSED waiting for user approval to push
-              ┆        Review the diff above and the arbiter link, then reply to continue.
+   [workflow] ├ PAUSED waiting for your review
+              ┆        Arbiter: <arbiter-url>
+              ┆        Diff:    <absolute-path-to-solution-worktree>
+              ┆
+              ┆        Reply with feedback to revise, or "go" / "lgtm" / "ship it" to publish.
    ```
 
-   Do **not** push, create a PR, or invoke pr-helper until the user replies. Wait for the user's next message before entering Phase B.
+   Do **not** push, create a PR, or invoke pr-helper until the user explicitly approves.
+
+   **If the user provides feedback:**
+   - Apply the requested changes directly to the solution worktree
+   - Re-run CI in the solution worktree to confirm nothing broke
+   - Re-run `/arbiter` to regenerate the review link against the updated code
+   - Re-print the Phase A summary with the updated diff and new arbiter link
+   - Pause again with the same prompt — repeat until the user approves
+
+   **If the user approves** (any message that is unambiguously an approval — "go", "lgtm", "ship it", "looks good", "yes", etc.), proceed to Phase B.
 
 ### Phase B — Publish (runs only after user confirms)
 
