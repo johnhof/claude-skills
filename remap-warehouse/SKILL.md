@@ -390,52 +390,60 @@ Print:
 
 ## Step 7 — Update Notion
 
-After writing the reference doc, update the Data Pipeline page in Notion with a remap summary.
+After writing the reference doc, update the Notion warehouse doc page with the full reference content.
 
 **Notion credentials:**
-- Integration token: stored in global `CLAUDE.md` under "Notion Access" as `NOTION_TOKEN`
-- Target page ID: `342b0007eb73809baf9aee60037b7d8f`
-- Target block ID: `343b0007eb73806698e9dcbaa5c9656d`
+- Integration token: `NOTION_API_KEY` env var (available in shell per global `CLAUDE.md`)
+- Target page ID: `342b0007-eb73-809b-af9a-ee60037b7d8f` (warehouse doc page)
 
-If no `NOTION_TOKEN` is found in CLAUDE.md, skip this step and print:
+If `NOTION_API_KEY` is not set, skip this step and print:
 ```
-[remap] ⚠ skipping Notion update — NOTION_TOKEN not configured in CLAUDE.md
+[remap] ⚠ skipping Notion update — NOTION_API_KEY not set
 ```
 
 Otherwise:
 
-**1. Fetch the target block to determine its type:**
+**1. Clear all existing blocks from the page:**
 ```bash
-curl -s "https://api.notion.com/v1/blocks/343b0007eb73806698e9dcbaa5c9656d" \
-  -H "Authorization: Bearer <NOTION_TOKEN>" \
+# Get existing block IDs (paginate if has_more)
+curl -s "https://api.notion.com/v1/blocks/342b0007-eb73-809b-af9a-ee60037b7d8f/children?page_size=100" \
+  -H "Authorization: Bearer $NOTION_API_KEY" \
+  -H "Notion-Version: 2022-06-28"
+
+# Delete each block
+curl -s -X DELETE "https://api.notion.com/v1/blocks/<block_id>" \
+  -H "Authorization: Bearer $NOTION_API_KEY" \
   -H "Notion-Version: 2022-06-28"
 ```
 
-**2. Replace the block content with a remap summary:**
+**2. Write the warehouse reference as Notion blocks in batches of 100:**
+
+Convert WAREHOUSE_REFERENCE.md to Notion blocks:
+- `## …` → `heading_2`, `### …` → `heading_3`
+- Markdown tables → Notion `table` blocks (with `table_row` children, first row as header)
+- All other non-empty lines → `paragraph`
+
 ```bash
-curl -s -X PATCH "https://api.notion.com/v1/blocks/343b0007eb73806698e9dcbaa5c9656d" \
-  -H "Authorization: Bearer <NOTION_TOKEN>" \
+curl -s -X PATCH "https://api.notion.com/v1/blocks/342b0007-eb73-809b-af9a-ee60037b7d8f/children" \
+  -H "Authorization: Bearer $NOTION_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Notion-Version: 2022-06-28" \
-  -d '{
-    "<block_type>": {
-      "rich_text": [{"type": "text", "text": {"content": "Last remapped: <ISO timestamp> | Schemas: N | Tables: N | Oldest sync: <schema> at <timestamp>"}}]
-    }
-  }'
+  -d '{"children": [<batch of up to 100 block objects>]}'
 ```
 
-Replace `<block_type>` with the `type` field returned in step 1 (e.g. `paragraph`, `callout`).
-
-If the PATCH returns an error, log it but do not abort — the reference doc is already written.
+Repeat until all blocks are written. If any batch returns an error, raise immediately — do not silently skip.
 
 Print:
 ```
-[remap] notion updated — Data Pipeline page reflects latest remap
+[remap] writing N blocks to Notion...
+[remap] Notion warehouse doc updated
 ```
 or on error:
 ```
-[remap] ⚠ notion update failed: <error>
+[remap] ⚠ Notion update failed: <error>
 ```
+
+> **Note:** The script (`dagster/scripts/remap_warehouse.py`) implements this automatically via `_update_notion_doc()`. Call the script rather than reimplementing this step manually.
 
 ---
 

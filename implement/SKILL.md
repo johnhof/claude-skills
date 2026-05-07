@@ -657,11 +657,12 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
 
    (one block per iteration; omit changes.md line for APPROVED iterations)
 
-   [BOLD+UNDERLINE]Complete Solution[/BOLD+UNDERLINE]  →  <absolute-path-to-solution-worktree>
+   [BOLD+UNDERLINE]Changes[/BOLD+UNDERLINE]  →  <absolute-path-to-solution-worktree>
 
-   <3–6 sentences describing the complete implementation>
+   • <high-level bullet: what changed at a behavior/product level — not which files>
+   • <repeat for each meaningful change, 2–5 bullets total>
 
-   [BOLD+UNDERLINE]Diff[/BOLD+UNDERLINE]
+   [BOLD+UNDERLINE]Files[/BOLD+UNDERLINE]
 
    <output of: git -C <solution-worktree-path> diff HEAD~<N>..HEAD --stat>
 
@@ -675,8 +676,8 @@ The solution is already a git worktree on branch `solution/{{prompt-slug}}` with
    - Agent summaries are factual, not evaluative — describe what each agent *did*, not whether it was good
    - Selection rationale is concrete — name the specific properties that decided the winner, not generic praise
    - Review findings are one sentence each — the finding name and the fix applied; omit Minors and Nits unless they were the only findings
-   - Complete solution description is written for someone who has not read any of the artifacts
-   - The Diff section shows the file-level change summary so the user can quickly assess scope before approving the push
+   - **Changes bullets describe behavior and product impact, not file names** — write them exactly as you would write PR description summary bullets: what does the system now do differently? what was broken and is now fixed? what can a user or caller now do that they couldn't before?
+   - The Files section shows the raw `--stat` output so the user can assess scope
    - **Phase A**: omit the `PR` line entirely (no PR exists yet); the Arbiter link is the primary call-to-action
    - **Phase B**: include the `PR` line with the full URL
 
