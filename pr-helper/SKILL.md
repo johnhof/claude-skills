@@ -182,31 +182,36 @@ Do not wait for user interaction after printing this.
 
 Only evaluate comments that are **human-authored code review feedback** — questions, suggestions, bug reports, or change requests about the code in the diff.
 
-For each qualifying comment, evaluate:
+For each qualifying comment, evaluate using the following classifications:
 
 - **Valid & actionable** — the comment identifies a real issue that can be fixed with a code change
-- **Valid but not actionable** — the comment is a question or discussion that doesn't require a code change
-- **Invalid / incorrect** — the agent believes the comment is factually wrong, based on a misunderstanding of the code, or already addressed
+- **Question — answerable** — the comment asks a question that can be answered by reading the code, the diff, or the broader codebase. The reviewer is seeking understanding, not requesting a change. Answer it.
+- **Question — ambiguous** — the comment is phrased as a question but it's genuinely unclear whether a code change is being requested, and the answer cannot be determined from the code alone
+- **Invalid / incorrect** — the comment is factually wrong, based on a misunderstanding of the code, or already addressed
+
+**Distinguishing actionable from questions:** Many review comments are phrased as questions but are really change requests ("should this be nullable?" = fix it). Others are pure curiosity ("why did you choose X over Y?", "is this intentional?", "what does this return when Z?"). Before classifying, ask: *is the reviewer asking for a code change, or are they asking for understanding?* If understanding, classify as a question and answer it. If a code change, classify as actionable and fix it.
 
 Evaluation criteria:
 - Does the comment reference something that actually exists in the current diff?
 - Is the concern already addressed elsewhere?
 - Is the suggestion consistent with the codebase's patterns and constraints?
+- Can the question be answered by reading the current code?
 
 ---
 
 ## Step 3 — Build Resolution Plans
 
-Group and plan fixes:
+Group and plan resolutions:
 
 - **Independent comments** — plan each as a separate commit
 - **Related comments** — plan as a single combined commit (note which comments are covered)
-- **Invalid/not-actionable comments** — record the reasoning; it will appear in the sticky comment
+- **Answerable questions** — compose a direct reply; no code change needed
+- **Invalid/not-actionable comments** — record the reasoning; it will appear in the tracker
 
 For each plan, note:
 - Which comment(s) it addresses
-- What change will be made (or why no change is needed)
-- Which files will be touched
+- What change will be made, what answer will be posted, or why no action is needed
+- Which files will be touched (for code changes)
 
 Print the full plan to the user **without waiting for interaction**:
 
@@ -218,17 +223,20 @@ Print the full plan to the user **without waiting for interaction**:
   Plan: <description of change>
   Files: <file(s)>
 
-[WILL FIX — commit 2]
-  Comments: @charlie top-level
-  Plan: <description of change>
-  Files: <file(s)>
+[WILL ANSWER — @charlie line 88]
+  Question: "<their question>"
+  Answer: <the answer you'll post as a reply>
 
-[INVALID — recorded in sticky comment]
-  Comment: @dave line 88
+[WILL ANSWER — @dave top-level]
+  Question: "<their question>"
+  Answer: <the answer you'll post as a reply>
+
+[INVALID — recorded in tracker]
+  Comment: @eve line 12
   Reason: The method is called in <file>:<line> — this is not dead code.
 
-[NOT ACTIONABLE — recorded in sticky comment]
-  Comment: @eve top-level
+[NOT ACTIONABLE — recorded in tracker]
+  Comment: @frank top-level
   Reason: This is an acknowledgement, no code change needed.
 ```
 
@@ -251,10 +259,32 @@ gh api /repos/{owner}/{repo}/issues/comments/{comment_id}/reactions \
 | Classification | Reaction | content value |
 |----------------|----------|---------------|
 | Valid & actionable — will fix | 👍 | `+1` |
-| Needs clarification before acting | ❓ | `confused` |
+| Question — answerable | 👀 | `eyes` |
+| Question — ambiguous | ❓ | `confused` |
 | Invalid or not actionable | 👎 | `-1` |
 
-**Do not post any comments — no replies, no thread responses, nothing.** Reactions are the only signal pr-helper sends per-comment. All outcomes are also recorded in the PR description tracker updated in Step 8.
+**For answerable questions**, after reacting with 👀, post a reply to the comment thread:
+
+```bash
+# Reply to an inline (file/line) review comment:
+gh api /repos/{owner}/{repo}/pulls/{pull_number}/comments \
+  -X POST \
+  -f body="<answer>" \
+  -F in_reply_to=<comment_id>
+
+# Reply to a top-level conversation comment:
+gh api /repos/{owner}/{repo}/issues/{issue_number}/comments \
+  -X POST \
+  -f body="<answer>"
+```
+
+Reply guidelines:
+- Be direct and factual — answer what was asked, cite the specific file/line if relevant
+- Do not be defensive or over-explain
+- Do not ask follow-up questions in the reply
+- Keep it short: 1–4 sentences is usually enough
+
+**For all other classifications**, reactions are the only signal. Do not post replies.
 
 ---
 
@@ -434,7 +464,7 @@ The PR was closed without merging. Exiting.
 ## Notes
 
 - **Never pause for user input** after Step 0 — the workflow runs fully autonomously from Step 1 through Step 8b
-- **Never post any PR comments** — pr-helper never creates or edits PR comments. All progress tracking lives in the PR description tracker section only
+- **Only post replies for answered questions** — pr-helper posts replies exclusively to respond to questions it has classified as answerable. All other progress tracking lives in the PR description tracker section only. Never post unsolicited comments, summaries, or status updates.
 - Never resolve/dismiss comments — leave that to humans
 - Always work on the PR's head branch; never commit directly to base
 - If the head branch is not checked out locally, run `gh pr checkout <number>` first
