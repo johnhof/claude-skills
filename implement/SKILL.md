@@ -172,9 +172,11 @@ After writing README.md and SPEC.md, resolve all referenced resources — from b
 
 Discover and capture the target repo's own development instructions and local skills before any agent is launched. The target repo root is the git root of the directory being modified.
 
-1. **CLAUDE.md** — look for `.claude/CLAUDE.md` and `CLAUDE.md` at the repo root. If either exists, read it in full and save to `resources/project-claude-md.md`. This file contains project-specific conventions, commands, environment setup, and constraints that all agents must follow.
+1. **DEVELOPMENT_GUIDE.md** — look for `DEVELOPMENT_GUIDE.md` at the repo root first; if not found, fall back to `~/.claude/DEVELOPMENT_GUIDE.md`. Read it in full and save to `resources/development-guide.md`. This is the coding standard all agents must follow: naming, error handling, testing, security, scope control, Python/TypeScript rules, and the LLM anti-patterns checklist. It is non-negotiable and takes precedence over agent instincts.
 
-2. **Local skills** — scan `.claude/skills/` in the repo root for skill directories (any subdirectory containing a `SKILL.md`). For each skill found:
+2. **CLAUDE.md** — look for `.claude/CLAUDE.md` and `CLAUDE.md` at the repo root. If either exists, read it in full and save to `resources/project-claude-md.md`. This file contains project-specific conventions, commands, environment setup, and constraints that all agents must follow.
+
+3. **Local skills** — scan `.claude/skills/` in the repo root for skill directories (any subdirectory containing a `SKILL.md`). For each skill found:
    - Read its `SKILL.md`
    - Assess whether it is relevant to this task (e.g. a `run-tests` skill is relevant to any task; a `deploy` skill is relevant if the task touches deployment config; a `seed-db` skill is relevant if the task touches database migrations)
    - Include all relevant skills in `resources/project-skills.md`, one section per skill with its full `SKILL.md` content
@@ -195,6 +197,7 @@ Discover and capture the target repo's own development instructions and local sk
 
 Print one line per item discovered:
 ```
+[project]   ├ dev-guide      → <absolute-path>/resources/development-guide.md
 [project]   ├ claude-md      → <absolute-path>/resources/project-claude-md.md
 [project]   ├ skill: run-tests  (relevant: CI step)
 [project]   ├ skill: deploy     (skipped: not relevant to this task)
@@ -208,9 +211,9 @@ After resolving, every agent launched in subsequent steps must be given:
 2. An explicit instruction to read **all files** there before beginning work
 
 Specifically:
-- **Implementation agents (Step 1)**: read all resources before planning or writing any code — treat Figma designs and ticket acceptance criteria as requirements that must be satisfied; follow `project-claude-md.md` as the authoritative guide for conventions, commands, and constraints in this repo; use skills listed in `project-skills.md` when performing the relevant operations (e.g. use the repo's `run-tests` skill to run tests rather than guessing the command)
-- **Selection agent (Step 2)**: penalize any implementation that ignores or contradicts content found in resources (e.g. a Figma spec, a ticket requirement, or a referenced API contract); penalize implementations that violated project conventions documented in `project-claude-md.md`
-- **Reviewer agent (Step 3)**: treat resource content as the authoritative requirements source — verify the implementation satisfies every acceptance criterion, design spec, and linked specification present in `resources/`; flag any violations of conventions documented in `project-claude-md.md` as Majors
+- **Implementation agents (Step 1)**: read all resources before planning or writing any code — treat Figma designs and ticket acceptance criteria as requirements that must be satisfied; follow `development-guide.md` as the global coding standard (naming, error handling, testing, security, scope control, and the LLM anti-patterns checklist); follow `project-claude-md.md` as the authoritative guide for repo-specific conventions, commands, and constraints; use skills listed in `project-skills.md` when performing the relevant operations (e.g. use the repo's `run-tests` skill to run tests rather than guessing the command)
+- **Selection agent (Step 2)**: penalize any implementation that ignores or contradicts content found in resources (e.g. a Figma spec, a ticket requirement, or a referenced API contract); penalize implementations that violated the global coding standards in `development-guide.md` or repo conventions in `project-claude-md.md`; treat LLM anti-pattern violations from `development-guide.md` (broad exception catching, unrequested features, generic names, untested edge cases, etc.) as automatic disqualifiers
+- **Reviewer agent (Step 3)**: treat resource content as the authoritative requirements source — verify the implementation satisfies every acceptance criterion, design spec, and linked specification present in `resources/`; cross-check every changed line against the rules in `development-guide.md` (the pre-flight checklist at the bottom is the minimum bar); flag any violations of conventions documented in `project-claude-md.md` or coding standards in `development-guide.md` as Majors
 
 ### Observability
 
@@ -218,6 +221,7 @@ Print one line per resource resolved:
 
 ```
 [resources] ┌ resolving external resources
+[resources] ├ dev-guide       → <absolute-path>/resources/development-guide.md
 [resources] ├ linear-ticket   → <absolute-path>/resources/linear-ticket.md
 [resources] ├ figma            → <absolute-path>/resources/figma-471-1215.md
 [resources] ├ url              → <absolute-path>/resources/url-stripe-api.md
@@ -228,7 +232,8 @@ Print one line per resource resolved:
 
 If no external resources are found (no ticket, no links, no file paths), print:
 ```
-[resources] ├ SKIP  no external resources detected
+[resources] ├ dev-guide       → <absolute-path>/resources/development-guide.md
+[resources] ├ SKIP  no other external resources detected
 [resources] └ DONE  project context resolved → <absolute-path>/resources/
 ```
 
