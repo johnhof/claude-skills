@@ -95,6 +95,28 @@ Implementation Summary — {{prompt-slug}}
 
 Every directory path printed must be the full absolute path (expand `~` to the actual home directory) so terminals render it as a clickable file link.
 
+### Timing
+
+At the **start** of Steps 1, 2, 3 (each iteration), and 4, and at the **end** of each of those same steps, record a timing entry by running this Bash command (substitute the actual step label and `start`/`end`):
+
+```bash
+python3 -c "
+import json, os, time
+path = os.path.expanduser('~/.claude/runs/implement/{{prompt-slug}}/timing.json')
+entries = json.load(open(path)) if os.path.exists(path) else []
+entries.append({'step': 'step-1-impl', 'event': 'start', 'ts': time.time()})
+json.dump(entries, open(path, 'w'))
+"
+```
+
+Use these exact step labels:
+- `step-1-impl` — Step 1 (parallel implementation)
+- `step-2-select` — Step 2 (selection)
+- `step-3-iter-N` — Step 3, iteration N (e.g. `step-3-iter-1`, `step-3-iter-2`)
+- `step-4-finalize` — Step 4 (finalize)
+
+Run the `start` entry immediately before the first action of each step, and the `end` entry immediately after the last action. For Step 3 with multiple iterations, write a separate `start`/`end` pair per iteration using the correct `step-3-iter-N` label.
+
 ## Directory Structure
 
 Every prompt execution creates a run directory at:
